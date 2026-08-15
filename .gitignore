@@ -1,0 +1,21 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+
+# Build
+dist/
+build/
+
+# Uploads
+uploads/
+
+# Google/Firebase credentials
+serviceAccountKey.json
+**/serviceAccountKey.json
