@@ -12,8 +12,9 @@ import {
 import React, {
   createContext,
   useContext,
-  useState,
   useEffect,
+  useRef,
+  useState,
 } from "react";
 
 import { auth } from "./firebase";
@@ -32,7 +33,6 @@ interface User {
   location: string;
   notificationsEnabled: boolean;
   phoneNumber?: string;
-
   preferredLanguage?: "en" | "hi" | "es" | "pt" | "fr" | "zh";
 
   loginHistory?: {
@@ -92,7 +92,7 @@ const AuthContext = createContext<AuthContextType | undefined>(
 export const useAuth = () => {
   const context = useContext(AuthContext);
 
-  if (context === undefined) {
+  if (!context) {
     throw new Error(
       "useAuth must be used within an AuthProvider"
     );
@@ -107,62 +107,96 @@ export const AuthProvider: React.FC<{
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  /*
-   * EXISTING SESSION CHECK
-   */
+  // =====================================================
+  // OTP PENDING STATE
+  // =====================================================
+
+  const pendingOtpEmailRef = useRef<string | null>(null);
+
+  // =====================================================
+  // FIREBASE AUTH STATE
+  // =====================================================
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(
       auth,
       async (firebaseUser) => {
-        if (firebaseUser?.email) {
-          try {
-            await requestNotificationPermission();
+        console.log(
+          "🔥 Firebase auth state:",
+          firebaseUser?.email || "logged out"
+        );
 
-            const res = await axiosInstance.get(
-              "/loggedinuser",
-              {
-                params: {
-                  email: firebaseUser.email,
-                },
-              }
-            );
+        // -------------------------------------------------
+        // IMPORTANT:
+        // Firebase password login is complete,
+        // BUT application login is NOT complete until OTP.
+        // -------------------------------------------------
 
-            console.log(
-              "Existing session response:",
-              res.data
-            );
+        if (
+          firebaseUser?.email &&
+          pendingOtpEmailRef.current &&
+          firebaseUser.email.toLowerCase() ===
+            pendingOtpEmailRef.current.toLowerCase()
+        ) {
+          console.log(
+            "⏳ OTP verification pending. Skipping normal auth."
+          );
 
-            /*
-             * Backend may return:
-             *
-             * { user: {...} }
-             *
-             * OR
-             *
-             * {...user}
-             */
-            const backendUser =
-              res.data?.user || res.data;
+          setIsLoading(false);
+          return;
+        }
 
-            if (backendUser?._id) {
-              setUser(backendUser);
+        // -------------------------------------------------
+        // NO FIREBASE USER
+        // -------------------------------------------------
 
-              localStorage.setItem(
-                "twitter-user",
-                JSON.stringify(backendUser)
-              );
-            }
-          } catch (err) {
-            console.log(
-              "Failed to fetch user:",
-              err
-            );
-          }
-        } else {
+        if (!firebaseUser) {
           setUser(null);
 
-          localStorage.removeItem(
-            "twitter-user"
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("twitter-user");
+          }
+
+          setIsLoading(false);
+          return;
+        }
+
+        // -------------------------------------------------
+        // EXISTING AUTHENTICATED SESSION
+        // -------------------------------------------------
+
+        try {
+          await requestNotificationPermission();
+
+          const res = await axiosInstance.get(
+            "/loggedinuser",
+            {
+              params: {
+                email: firebaseUser.email,
+                uid: firebaseUser.uid,
+              },
+            }
+          );
+
+          const backendUser =
+            res.data?.user || res.data;
+
+          if (backendUser?._id) {
+            console.log(
+              "✅ Existing Firebase session restored"
+            );
+
+            setUser(backendUser);
+
+            localStorage.setItem(
+              "twitter-user",
+              JSON.stringify(backendUser)
+            );
+          }
+        } catch (error) {
+          console.error(
+            "❌ Existing session restore failed:",
+            error
           );
         }
 
@@ -170,199 +204,243 @@ export const AuthProvider: React.FC<{
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  /*
-   * LOGIN
-   *
-   * OTP COMPLETELY DISABLED
-   *
-   * Flow:
-   *
-   * Firebase Login
-   *       ↓
-   * Backend User Check
-   *       ↓
-   * Login History
-   *       ↓
-   * Direct Login
-   */
- const login = async (
-  email: string,
-  password: string
-): Promise<{
-  requireOtp: boolean;
-  email?: string;
-}> => {
-  setIsLoading(true);
+  // =====================================================
+  // LOGIN
+  // =====================================================
 
-  try {
+  const login = async (
+    email: string,
+    password: string
+  ): Promise<{
+    requireOtp: boolean;
+    email?: string;
+  }> => {
+    setIsLoading(true);
+
     const cleanEmail = email.trim().toLowerCase();
 
-    if (!cleanEmail || !password) {
-      throw new Error("Email and password are required.");
-    }
-
-    /*
-     * 1. FIREBASE LOGIN
-     */
-    const usercred = await signInWithEmailAndPassword(
-      auth,
-      cleanEmail,
-      password
-    );
-
-    const firebaseUser = usercred.user;
-
-    if (!firebaseUser.email) {
-      await signOut(auth);
-      throw new Error("Email not found in Firebase account.");
-    }
-
-    console.log(
-      "✅ Firebase login successful:",
-      firebaseUser.email
-    );
-
-    /*
-     * 2. GET USER FROM BACKEND
-     */
-    const browserName =
-      typeof navigator !== "undefined"
-        ? navigator.userAgent
-        : "Unknown";
-
-    let res;
-
     try {
-      res = await axiosInstance.get("/loggedinuser", {
-        params: {
-          email: firebaseUser.email,
-          browser: browserName,
-        },
-      });
-    } catch (backendError: any) {
-      console.error(
-        "🔥 Backend user lookup failed:",
-        backendError?.response?.data || backendError
+      if (!cleanEmail || !password) {
+        throw new Error(
+          "Email and password are required."
+        );
+      }
+
+      // -------------------------------------------------
+      // IMPORTANT:
+      // Set this BEFORE Firebase login.
+      // onAuthStateChanged will see this and stop
+      // automatic authentication.
+      // -------------------------------------------------
+
+      pendingOtpEmailRef.current = cleanEmail;
+
+      console.log(
+        "🔐 Starting Firebase password login..."
       );
 
-      /*
-       * Firebase login succeeded but MongoDB user
-       * does not exist / backend failed.
-       *
-       * Sign Firebase user out so we don't leave
-       * an inconsistent authenticated state.
-       */
-      await signOut(auth);
+      // -------------------------------------------------
+      // 1. FIREBASE LOGIN
+      // -------------------------------------------------
 
-      localStorage.removeItem("twitter-user");
-      setUser(null);
+      const usercred =
+        await signInWithEmailAndPassword(
+          auth,
+          cleanEmail,
+          password
+        );
 
-      throw new Error(
-        backendError?.response?.data?.message ||
-          "Account found in Firebase, but user profile was not found in the database."
-      );
-    }
+      const firebaseUser = usercred.user;
 
-    console.log(
-      "✅ Backend login response:",
-      res.data
-    );
+      if (!firebaseUser.email) {
+        pendingOtpEmailRef.current = null;
 
-    /*
-     * 3. SUPPORT BOTH RESPONSE FORMATS
-     *
-     * { user: {...} }
-     *
-     * OR
-     *
-     * {...user}
-     */
-    const backendUser =
-      res.data?.user || res.data;
+        await signOut(auth);
 
-    if (!backendUser?._id) {
-      console.error(
-        "❌ Invalid backend user:",
-        res.data
+        throw new Error(
+          "Email not found in Firebase account."
+        );
+      }
+
+      console.log(
+        "✅ Firebase login successful:",
+        firebaseUser.email
       );
 
-      await signOut(auth);
+      // -------------------------------------------------
+      // 2. BACKEND USER CHECK
+      // -------------------------------------------------
 
-      localStorage.removeItem("twitter-user");
-      setUser(null);
+      const browserName =
+        typeof navigator !== "undefined"
+          ? navigator.userAgent
+          : "Unknown";
 
-      throw new Error(
-        "User profile not found. Please register this account first."
-      );
-    }
-
-    /*
-     * 4. OPTIONAL LOGIN HISTORY
-     *
-     * Login should NOT fail if history logging fails.
-     */
-    try {
-      await axiosInstance.post(
-        "/login-history",
+      const res = await axiosInstance.get(
+        "/loggedinuser",
         {
-          email: firebaseUser.email,
-          browser: browserName,
+          params: {
+            email: firebaseUser.email,
+            uid: firebaseUser.uid,
+            browser: browserName,
+          },
         }
       );
 
-      console.log("✅ Login history saved");
-    } catch (historyError: any) {
-      console.warn(
-        "⚠️ Login history failed:",
-        historyError?.response?.data ||
-          historyError?.message ||
-          historyError
+      console.log(
+        "✅ Backend login response:",
+        res.data
+      );
+
+      const backendUser =
+        res.data?.user || res.data;
+
+      // -------------------------------------------------
+      // 3. VALIDATE BACKEND USER
+      // -------------------------------------------------
+
+      if (!backendUser?._id) {
+        pendingOtpEmailRef.current = null;
+
+        await signOut(auth);
+
+        setUser(null);
+
+        localStorage.removeItem(
+          "twitter-user"
+        );
+
+        throw new Error(
+          "User profile not found. Please register this account first."
+        );
+      }
+
+      console.log(
+        "✅ User profile validated:",
+        backendUser.email
+      );
+
+      // -------------------------------------------------
+      // 4. LOGIN HISTORY
+      // -------------------------------------------------
+
+      try {
+        await axiosInstance.post(
+          "/login-history",
+          {
+            email: firebaseUser.email,
+            browser: browserName,
+          }
+        );
+
+        console.log(
+          "✅ Login history saved"
+        );
+      } catch (historyError: any) {
+        console.warn(
+          "⚠️ Login history failed:",
+          historyError?.response?.data ||
+            historyError?.message
+        );
+      }
+
+      // -------------------------------------------------
+      // VERY IMPORTANT
+      //
+      // DO NOT:
+      //
+      // setUser(backendUser)
+      //
+      // User is still waiting for OTP.
+      // -------------------------------------------------
+
+      // -------------------------------------------------
+      // 5. SEND LOGIN OTP
+      // -------------------------------------------------
+
+      await axiosInstance.post(
+        "/send-login-otp",
+        {
+          email: firebaseUser.email,
+        }
+      );
+
+      console.log(
+        "📧 Login OTP sent successfully"
+      );
+
+      // -------------------------------------------------
+      // 6. RETURN OTP REQUIREMENT
+      // -------------------------------------------------
+
+      return {
+        requireOtp: true,
+        email: firebaseUser.email,
+      };
+    } catch (error: any) {
+      console.error(
+        "🔥 LOGIN ERROR:",
+        error?.response?.data ||
+          error?.message ||
+          error
+      );
+
+      // If login completely fails,
+      // cancel OTP pending state.
+
+      pendingOtpEmailRef.current = null;
+
+      try {
+        await signOut(auth);
+      } catch {}
+
+      setUser(null);
+
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // =====================================================
+  // OTP VERIFIED
+  // =====================================================
+
+  const setAuthenticatedUser = (
+    authenticatedUser: User
+  ) => {
+    console.log(
+      "🎉 OTP VERIFIED - AUTHENTICATING USER"
+    );
+
+    // First remove OTP pending state
+    pendingOtpEmailRef.current = null;
+
+    // Now application is actually logged in
+    setUser(authenticatedUser);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "twitter-user",
+        JSON.stringify(authenticatedUser)
       );
     }
 
-    /*
-     * 5. SAVE USER
-     */
-    setUser(backendUser);
-
-    localStorage.setItem(
-      "twitter-user",
-      JSON.stringify(backendUser)
-    );
-
     console.log(
-      "🎉 LOGIN SUCCESS:",
-      backendUser.email
+      "✅ USER AUTHENTICATED:",
+      authenticatedUser.email
     );
+  };
 
-    await axiosInstance.post("/send-login-otp", {
-  email: firebaseUser.email,
-});
+  // =====================================================
+  // SIGNUP
+  // =====================================================
 
-return {
-  requireOtp: true,
-  email: firebaseUser.email,
-};
-  } catch (error: any) {
-    console.error(
-      "🔥 LOGIN ERROR:",
-      error?.response?.data ||
-        error?.message ||
-        error
-    );
-
-    throw error;
-  } finally {
-    setIsLoading(false);
-  }
-};
-
-  /*
-   * SIGNUP
-   */
   const signup = async (
     email: string,
     password: string,
@@ -372,60 +450,32 @@ return {
     setIsLoading(true);
 
     try {
-      /*
-       * FIREBASE SIGNUP
-       */
       const usercred =
         await createUserWithEmailAndPassword(
           auth,
-          email.trim(),
+          email.trim().toLowerCase(),
           password
         );
 
       const firebaseUser =
         usercred.user;
 
-      /*
-       * BACKEND USER
-       */
       const newuser = {
         username,
         displayName,
-
         avatar:
           firebaseUser.photoURL ||
           "https://images.pexels.com/photos/1139743/pexels-photo-1139743.jpeg?auto=compress&cs=tinysrgb&w=400",
-
-        email:
-          firebaseUser.email,
-
-        uid:
-          firebaseUser.uid,
+        email: firebaseUser.email,
+        uid: firebaseUser.uid,
       };
 
-      /*
-       * REGISTER USER
-       */
       const res =
         await axiosInstance.post(
           "/register",
           newuser
         );
 
-      console.log(
-        "Signup response:",
-        res.data
-      );
-
-      /*
-       * Backend may return:
-       *
-       * { user: {...} }
-       *
-       * OR
-       *
-       * {...user}
-       */
       const backendUser =
         res.data?.user || res.data;
 
@@ -439,11 +489,9 @@ return {
 
       localStorage.setItem(
         "twitter-user",
-        JSON.stringify(
-          backendUser
-        )
+        JSON.stringify(backendUser)
       );
-    } catch (error: any) {
+    } catch (error) {
       console.error(
         "Signup error:",
         error
@@ -455,17 +503,24 @@ return {
     }
   };
 
-  /*
-   * LOGOUT
-   */
+  // =====================================================
+  // LOGOUT
+  // =====================================================
+
   const logout = async () => {
     try {
+      pendingOtpEmailRef.current = null;
+
       setUser(null);
 
       await signOut(auth);
 
       localStorage.removeItem(
         "twitter-user"
+      );
+
+      console.log(
+        "✅ Logout successful"
       );
     } catch (error) {
       console.error(
@@ -475,9 +530,10 @@ return {
     }
   };
 
-  /*
-   * UPDATE LANGUAGE
-   */
+  // =====================================================
+  // UPDATE LANGUAGE
+  // =====================================================
+
   const updatePreferredLanguage = (
     language:
       | "en"
@@ -491,39 +547,21 @@ return {
 
     const updatedUser = {
       ...user,
-      preferredLanguage:
-        language,
+      preferredLanguage: language,
     };
 
     setUser(updatedUser);
 
     localStorage.setItem(
       "twitter-user",
-      JSON.stringify(
-        updatedUser
-      )
+      JSON.stringify(updatedUser)
     );
   };
 
-  /*
-   * SET AUTHENTICATED USER
-   */
-  const setAuthenticatedUser = (
-    authenticatedUser: User
-  ) => {
-    setUser(authenticatedUser);
+  // =====================================================
+  // UPDATE PROFILE
+  // =====================================================
 
-    localStorage.setItem(
-      "twitter-user",
-      JSON.stringify(
-        authenticatedUser
-      )
-    );
-  };
-
-  /*
-   * UPDATE PROFILE
-   */
   const updateProfile = async (
     profileData: {
       displayName: string;
@@ -565,9 +603,7 @@ return {
 
         localStorage.setItem(
           "twitter-user",
-          JSON.stringify(
-            finalUser
-          )
+          JSON.stringify(finalUser)
         );
       }
     } catch (error) {
@@ -582,135 +618,125 @@ return {
     }
   };
 
-  /*
-   * GOOGLE SIGN IN
-   */
-  const googlesignin =
-    async () => {
-      setIsLoading(true);
+  // =====================================================
+  // GOOGLE LOGIN
+  // =====================================================
+
+  const googlesignin = async () => {
+    setIsLoading(true);
+
+    try {
+      const googleauthprovider =
+        new GoogleAuthProvider();
+
+      const result =
+        await signInWithPopup(
+          auth,
+          googleauthprovider
+        );
+
+      const firebaseuser =
+        result.user;
+
+      if (!firebaseuser.email) {
+        throw new Error(
+          "No email found in Google account"
+        );
+      }
+
+      let userData: any = null;
 
       try {
-        const googleauthprovider =
-          new GoogleAuthProvider();
-
-        const result =
-          await signInWithPopup(
-            auth,
-            googleauthprovider
+        const res =
+          await axiosInstance.get(
+            "/loggedinuser",
+            {
+              params: {
+                email:
+                  firebaseuser.email,
+                uid: firebaseuser.uid,
+              },
+            }
           );
 
-        const firebaseuser =
-          result.user;
-
-        if (!firebaseuser.email) {
-          throw new Error(
-            "No email found in Google account"
-          );
-        }
-
-        let userData: any =
-          null;
-
-        /*
-         * CHECK EXISTING USER
-         */
-        try {
-          const res =
-            await axiosInstance.get(
-              "/loggedinuser",
-              {
-                params: {
-                  email:
-                    firebaseuser.email,
-                },
-              }
-            );
-
-          userData =
-            res.data?.user ||
-            res.data;
-        } catch (err) {
-          console.log(
-            "Google user not found. Creating user..."
-          );
-        }
-
-        /*
-         * CREATE NEW GOOGLE USER
-         */
-        if (!userData?._id) {
-          const newuser = {
-            username:
-              firebaseuser.email.split(
-                "@"
-              )[0],
-
-            displayName:
-              firebaseuser.displayName ||
-              "User",
-
-            avatar:
-              firebaseuser.photoURL ||
-              "https://images.pexels.com/photos/1139743/pexels-photo-1139743.jpeg?auto=compress&cs=tinysrgb&w=400",
-
-            email:
-              firebaseuser.email,
-
-            uid:
-              firebaseuser.uid,
-          };
-
-          const registerRes =
-            await axiosInstance.post(
-              "/register",
-              newuser
-            );
-
-          userData =
-            registerRes.data?.user ||
-            registerRes.data;
-        }
-
-        /*
-         * FINAL USER CHECK
-         */
-        if (!userData?._id) {
-          throw new Error(
-            "Login/Register failed: No user data returned"
-          );
-        }
-
-        setUser(userData);
-
-        localStorage.setItem(
-          "twitter-user",
-          JSON.stringify(
-            userData
-          )
-        );
-
+        userData =
+          res.data?.user ||
+          res.data;
+      } catch {
         console.log(
-          "Google login successful:",
-          userData
+          "Google user not found. Creating user..."
         );
-      } catch (error: any) {
-        console.error(
-          "Google Sign-In Error:",
-          error
-        );
-
-        alert(
-          error.response?.data
-            ?.message ||
-            error.message ||
-            "Login failed"
-        );
-
-        throw error;
-      } finally {
-        setIsLoading(false);
       }
-    };
+
+      if (!userData?._id) {
+        const newuser = {
+          username:
+            firebaseuser.email.split("@")[0],
+
+          displayName:
+            firebaseuser.displayName ||
+            "User",
+
+          avatar:
+            firebaseuser.photoURL ||
+            "https://images.pexels.com/photos/1139743/pexels-photo-1139743.jpeg?auto=compress&cs=tinysrgb&w=400",
+
+          email:
+            firebaseuser.email,
+
+          uid:
+            firebaseuser.uid,
+        };
+
+        const registerRes =
+          await axiosInstance.post(
+            "/register",
+            newuser
+          );
+
+        userData =
+          registerRes.data?.user ||
+          registerRes.data;
+      }
+
+      if (!userData?._id) {
+        throw new Error(
+          "Login/Register failed: No user data returned"
+        );
+      }
+
+      setUser(userData);
+
+      localStorage.setItem(
+        "twitter-user",
+        JSON.stringify(userData)
+      );
+
+      console.log(
+        "Google login successful:",
+        userData
+      );
+    } catch (error: any) {
+      console.error(
+        "Google Sign-In Error:",
+        error
+      );
+
+      alert(
+        error.response?.data?.message ||
+          error.message ||
+          "Login failed"
+      );
+
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // =====================================================
+  // PROVIDER
+  // =====================================================
 
   return (
     <AuthContext.Provider

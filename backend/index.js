@@ -475,115 +475,154 @@ await transporter.sendMail({
   }
 });
 //Register
-app.post("/upload-audio", audioUpload.single("audio"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No audio file uploaded",
-      });
-    }
-
-    console.log("🎵 Audio file:", {
-      name: req.file.originalname,
-      size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
-      type: req.file.mimetype,
-    });
-
-    console.log("☁️ Uploading audio to Cloudinary...");
-
-    const result = await cloudinary.uploader.upload_large(
-      req.file.path,
-      {
-        resource_type: "video",
-        folder: "twiller-audio",
-        chunk_size: 6 * 1024 * 1024, // 6 MB chunks
+app.post("/upload-audio",
+  audioUpload.single("audio"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No audio file uploaded",
+        });
       }
-    );
 
-    console.log("✅ AUDIO UPLOADED:", result.secure_url);
+      console.log("🎵 Audio file:", {
+        name: req.file.originalname,
+        size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
+        type: req.file.mimetype,
+      });
 
-    return res.status(200).json({
-      success: true,
-      url: result.secure_url,
-    });
+      console.log("☁️ Uploading audio to Cloudinary...");
 
-  } catch (error) {
-    console.error("🔥 AUDIO UPLOAD ERROR:", error);
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_large(
+          req.file.path,
+          {
+            resource_type: "video",
+            folder: "twiller-audio",
+            chunk_size: 6 * 1024 * 1024,
+          },
+          (error, result) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve(result);
+            }
+          }
+        );
+      });
 
-    return res.status(500).json({
-      success: false,
-      message: "Audio upload failed",
-      error: error.message,
-    });
+      console.log("☁️ CLOUDINARY AUDIO RESULT:", result);
 
-  } finally {
-    // Always delete temporary local file
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-        console.log("🗑️ Temporary audio file deleted");
-      } catch (deleteError) {
-        console.error("Failed to delete temporary audio:", deleteError);
+      const audioUrl = result?.secure_url;
+
+      console.log("✅ AUDIO URL:", audioUrl);
+
+      if (!audioUrl) {
+        throw new Error("Cloudinary did not return audio URL");
+      }
+
+      return res.status(200).json({
+        success: true,
+        url: audioUrl,
+      });
+    } catch (error) {
+      console.error("🔥 AUDIO UPLOAD ERROR:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Audio upload failed",
+        error: error?.message,
+      });
+    } finally {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log("🗑️ Temporary audio file deleted");
+        } catch (deleteError) {
+          console.error(
+            "Failed to delete temporary audio:",
+            deleteError
+          );
+        }
       }
     }
   }
-});
-app.post("/upload-image", upload.single("image"), async (req, res) => {
-  try {
-    console.log("📸 FILE:", req.file);
+);
+app.post(
+  "/upload-image",
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No image uploaded",
+        });
+      }
 
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No image uploaded",
+      console.log("📸 IMAGE FILE:", {
+        name: req.file.originalname,
+        size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
+        type: req.file.mimetype,
+        path: req.file.path,
       });
+
+      console.log("☁️ Uploading image to Cloudinary...");
+
+      const result = await cloudinary.uploader.upload(
+        req.file.path,
+        {
+          resource_type: "image",
+          folder: "twiller-images",
+        }
+      );
+
+      console.log("☁️ CLOUDINARY IMAGE RESULT:", result);
+
+      if (!result?.secure_url) {
+        throw new Error(
+          "Cloudinary did not return image URL"
+        );
+      }
+
+      console.log(
+        "✅ IMAGE URL:",
+        result.secure_url
+      );
+
+      return res.status(200).json({
+        success: true,
+        url: result.secure_url,
+      });
+    } catch (error) {
+      console.error("🔥 CLOUDINARY IMAGE ERROR:", {
+        message: error?.message,
+        name: error?.name,
+        http_code: error?.http_code,
+        fullError: error,
+      });
+
+      return res.status(500).json({
+        success: false,
+        message: "Image upload failed",
+        error: error?.message,
+      });
+    } finally {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log("🗑️ Temporary image deleted");
+        } catch (deleteError) {
+          console.error(
+            "Failed to delete temporary image:",
+            deleteError
+          );
+        }
+      }
     }
-
-    console.log("☁️ Cloudinary config check:", {
-      cloudName: process.env.CLOUD_NAME,
-      hasApiKey: !!process.env.CLOUD_API_KEY,
-      hasApiSecret: !!process.env.CLOUD_API_SECRET,
-    });
-
-    console.log("☁️ Uploading to Cloudinary...");
-
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "twiller-images",
-      resource_type: "image",
-    });
-
-    console.log("✅ CLOUDINARY RESULT:", result);
-    console.log("✅ IMAGE URL:", result.secure_url);
-
-    if (fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-
-    return res.status(200).json({
-      success: true,
-      url: result.secure_url,
-    });
-
-  } catch (error) {
-    console.error("🔥 CLOUDINARY IMAGE ERROR:", {
-      message: error?.message,
-      name: error?.name,
-      http_code: error?.http_code,
-      error: error,
-    });
-
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Image upload failed",
-      error: error?.message,
-    });
   }
-});
+);
 
 app.post("/register", async (req, res) => {
   try {
@@ -614,64 +653,97 @@ app.post("/register", async (req, res) => {
 // loggedinuser
 app.get("/loggedinuser", async (req, res) => {
   try {
-    const { email, browser } = req.query;
-     console.log("LOGIN CHECK:");
+    const { email, uid, browser } = req.query;
+
+    console.log("LOGIN CHECK:");
     console.log("Email:", email);
+    console.log("Firebase UID:", uid);
     console.log("Browser:", browser);
 
     if (!email) {
-      return res.status(400).send({
-        error: "Email required",
+      return res.status(400).json({
+        success: false,
+        message: "Email required",
       });
     }
 
-    const user = await User.findOne({ email });
+    if (!uid) {
+      return res.status(400).json({
+        success: false,
+        message: "Firebase UID required",
+      });
+    }
+
+    const user = await User.findOne({
+      email: String(email).toLowerCase(),
+    });
 
     if (!user) {
-      return res.status(404).send({
-        error: "User not found",
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
       });
     }
 
-   const deviceInfo = getDeviceInfo(req.headers["user-agent"]);
+    /*
+     * Existing users created before UID was required
+     * may not have a UID.
+     *
+     * Since Firebase has already authenticated this user,
+     * attach the Firebase UID to the MongoDB profile.
+     */
+    if (!user.uid) {
+      user.uid = String(uid);
+      console.log("✅ Firebase UID added to existing user");
+    } else if (user.uid !== String(uid)) {
+      console.error("❌ Firebase UID mismatch");
+
+      return res.status(403).json({
+        success: false,
+        message: "Firebase account does not match this user profile",
+      });
+    }
+
+    const deviceInfo = getDeviceInfo(
+      req.headers["user-agent"]
+    );
 
     // Mobile login restriction
     if (!isLoginAllowed(deviceInfo.deviceType)) {
-      return res.status(403).send({
+      return res.status(403).json({
+        success: false,
         message:
           "Mobile login is allowed only between 10:00 AM and 1:00 PM.",
       });
     }
 
-    // Browser detection
-    // Browser detection
-const browserName = String(
-  browser || deviceInfo.browser || ""
-).toLowerCase();
+    user.loginHistory.push({
+      browser: deviceInfo.browser,
+      operatingSystem: deviceInfo.operatingSystem,
+      deviceType: deviceInfo.deviceType,
+      ipAddress:
+        req.headers["x-forwarded-for"]?.split(",")[0] ||
+        req.socket.remoteAddress,
+      loginTime: new Date(),
+    });
 
-// Direct login for all browsers
-user.loginHistory.push({
-  browser: deviceInfo.browser,
-  operatingSystem: deviceInfo.operatingSystem,
-  deviceType: deviceInfo.deviceType,
-  ipAddress:
-    req.headers["x-forwarded-for"]?.split(",")[0] ||
-    req.socket.remoteAddress,
-  loginTime: new Date(),
-});
+    await user.save();
 
-await user.save();
+    console.log("✅ User profile validated:", user.email);
 
-return res.status(200).send({
-  requireOtp: false,
-  email: user.email,
-  user,
-  deviceInfo,
-});
-
+    return res.status(200).json({
+      success: true,
+      requireOtp: true,
+      email: user.email,
+      user,
+      deviceInfo,
+    });
   } catch (error) {
-    return res.status(500).send({
-      error: error.message,
+    console.error("🔥 /loggedinuser ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
     });
   }
 });

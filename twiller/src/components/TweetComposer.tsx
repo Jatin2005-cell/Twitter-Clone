@@ -234,14 +234,9 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
     });
 
     const res = await axiosInstance.post(
-      "/upload-image",
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      }
-    );
+  "/upload-image",
+  formData
+);
 
     console.log("✅ IMAGE UPLOADED:", res.data);
 
@@ -281,48 +276,43 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
 
   if (!file) return;
 
-  // File type validation
   if (!file.type.startsWith("audio/")) {
     alert("Please select a valid audio file");
     return;
   }
 
-  // 100 MB validation
   if (file.size > 100 * 1024 * 1024) {
     alert("Audio size cannot exceed 100 MB");
     return;
   }
 
-  const audio = new Audio(URL.createObjectURL(file));
+  const audioUrl = URL.createObjectURL(file);
+  const audio = new Audio(audioUrl);
 
   audio.onloadedmetadata = async () => {
-    // 5 minute validation
-    if (audio.duration > 300) {
-      alert("Audio duration cannot exceed 5 minutes");
-      URL.revokeObjectURL(audio.src);
-      return;
-    }
-
-    // IST time validation: 2 PM - 7 PM
-    const now = new Date();
-
-    const indiaTime = new Date(
-      now.toLocaleString("en-US", {
-        timeZone: "Asia/Kolkata",
-      })
-    );
-
-    const hour = indiaTime.getHours();
-
-    if (hour < 14 || hour >= 19) {
-      alert(
-        "Audio tweets are allowed only between 2 PM and 7 PM IST."
-      );
-      URL.revokeObjectURL(audio.src);
-      return;
-    }
-
     try {
+      if (audio.duration > 300) {
+        alert("Audio duration cannot exceed 5 minutes");
+        return;
+      }
+
+      const now = new Date();
+
+      const indiaTime = new Date(
+        now.toLocaleString("en-US", {
+          timeZone: "Asia/Kolkata",
+        })
+      );
+
+      const hour = indiaTime.getHours();
+
+      if (hour < 14 || hour >= 19) {
+        alert(
+          "Audio tweets are allowed only between 2 PM and 7 PM IST."
+        );
+        return;
+      }
+
       setIsLoading(true);
 
       const formData = new FormData();
@@ -337,24 +327,30 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
 
       const res = await axiosInstance.post(
         "/upload-audio",
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+        formData
       );
 
-      console.log("✅ AUDIO UPLOADED:", res.data);
+      console.log(
+        "✅ AUDIO SERVER RESPONSE:",
+        res.data
+      );
 
-      if (res.data?.url) {
-        setAudioFile(file);
-        setAudioUrl(res.data.url);
-
-        alert("Audio uploaded successfully ✅");
-      } else {
-        throw new Error("Audio URL not returned by server");
+      if (!res.data?.success || !res.data?.url) {
+        throw new Error(
+          res.data?.message ||
+            "Audio URL not returned by server"
+        );
       }
+
+      setAudioFile(file);
+      setAudioUrl(res.data.url);
+
+      console.log(
+        "🎵 FINAL AUDIO URL:",
+        res.data.url
+      );
+
+      alert("Audio uploaded successfully ✅");
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         console.error("🔥 AUDIO UPLOAD ERROR:", {
@@ -367,19 +363,23 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
             "Audio upload failed"
         );
       } else {
-        console.error("🔥 AUDIO UPLOAD ERROR:", error);
+        console.error(
+          "🔥 AUDIO UPLOAD ERROR:",
+          error
+        );
+
         alert("Audio upload failed");
       }
     } finally {
       setIsLoading(false);
-      URL.revokeObjectURL(audio.src);
+      URL.revokeObjectURL(audioUrl);
     }
   };
 
   audio.onerror = () => {
     alert("Unable to read this audio file");
+    URL.revokeObjectURL(audioUrl);
     setIsLoading(false);
-    URL.revokeObjectURL(audio.src);
   };
 };
 
