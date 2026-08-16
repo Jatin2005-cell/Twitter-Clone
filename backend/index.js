@@ -759,7 +759,7 @@ app.post("/send-login-otp", async (req, res) => {
       });
     }
 
-    const otp = generateOtp();
+     const otp = generateOTP();
 
     user.otp = otp;
     user.otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
