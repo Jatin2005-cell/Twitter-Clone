@@ -14,13 +14,13 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// ✅ Export auth
 export const auth = getAuth(app);
 
-// Analytics (optional)
 if (typeof window !== "undefined") {
   isSupported().then((yes) => {
-    if (yes) getAnalytics(app);
+    if (yes) {
+      getAnalytics(app);
+    }
   });
 }
 
