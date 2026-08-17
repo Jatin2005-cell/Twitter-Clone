@@ -729,16 +729,14 @@ export default function AuthModal({
           High z-index so it is ALWAYS above
           Landing/Auth modal.
       ======================================== */}
-      {showLoginOtp && (
-        <div className="fixed inset-0 z-[100]">
-          <LoginOtpModal
-            open={true}
-            email={loginOtpEmail}
-            onClose={handleLoginOtpClose}
-            onSuccess={handleLoginOtpSuccess}
-          />
-        </div>
-      )}
+   {showLoginOtp && loginOtpEmail && (
+  <LoginOtpModal
+    open={showLoginOtp}
+    email={loginOtpEmail}
+    onClose={handleLoginOtpClose}
+    onSuccess={handleLoginOtpSuccess}
+  />
+)}
     </>
   );
 }

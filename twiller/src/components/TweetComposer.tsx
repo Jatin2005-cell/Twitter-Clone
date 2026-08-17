@@ -269,32 +269,56 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
   // =========================
   // AUDIO UPLOAD
   // =========================
-  const handleAudioUpload = async (
+ const handleAudioUpload = async (
   e: React.ChangeEvent<HTMLInputElement>
 ) => {
   const file = e.target.files?.[0];
 
+  // File select nahi hui
   if (!file) return;
+
+  // =========================
+  // AUDIO TYPE
+  // =========================
 
   if (!file.type.startsWith("audio/")) {
     alert("Please select a valid audio file");
+    e.target.value = "";
     return;
   }
+
+  // =========================
+  // 100 MB LIMIT
+  // =========================
 
   if (file.size > 100 * 1024 * 1024) {
     alert("Audio size cannot exceed 100 MB");
+    e.target.value = "";
     return;
   }
 
-  const audioUrl = URL.createObjectURL(file);
-  const audio = new Audio(audioUrl);
+  const objectUrl = URL.createObjectURL(file);
+  const audio = new Audio(objectUrl);
 
   audio.onloadedmetadata = async () => {
     try {
+      // =========================
+      // 5 MINUTE LIMIT
+      // =========================
+
+      if (!Number.isFinite(audio.duration)) {
+        alert("Unable to determine audio duration");
+        return;
+      }
+
       if (audio.duration > 300) {
         alert("Audio duration cannot exceed 5 minutes");
         return;
       }
+
+      // =========================
+      // 2 PM - 7 PM IST
+      // =========================
 
       const now = new Date();
 
@@ -304,23 +328,50 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
         })
       );
 
-      const hour = indiaTime.getHours();
+      const currentMinutes =
+        indiaTime.getHours() * 60 +
+        indiaTime.getMinutes();
 
-      if (hour < 14 || hour >= 19) {
+      const startTime = 14 * 60;
+      const endTime = 19 * 60;
+
+      if (
+        currentMinutes < startTime ||
+        currentMinutes >= endTime
+      ) {
         alert(
-          "Audio tweets are allowed only between 2 PM and 7 PM IST."
+          "Audio tweets are allowed only between 2:00 PM and 7:00 PM IST."
         );
         return;
       }
 
+      // =========================
+      // USER EMAIL
+      // =========================
+
+      if (!user?.email) {
+        alert("User email not found. Please login again.");
+        return;
+      }
+
+      // =========================
+      // UPLOAD
+      // =========================
+
       setIsLoading(true);
 
       const formData = new FormData();
+
       formData.append("audio", file);
+      formData.append("email", user.email);
 
       console.log("🎵 Uploading audio:", {
         name: file.name,
-        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+        size: `${(
+          file.size /
+          1024 /
+          1024
+        ).toFixed(2)} MB`,
         type: file.type,
         duration: `${audio.duration.toFixed(2)} sec`,
       });
@@ -342,6 +393,10 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
         );
       }
 
+      // =========================
+      // SAVE AUDIO
+      // =========================
+
       setAudioFile(file);
       setAudioUrl(res.data.url);
 
@@ -353,13 +408,15 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
       alert("Audio uploaded successfully ✅");
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        console.error("🔥 AUDIO UPLOAD ERROR:", {
-          status: error.response?.status,
-          data: error.response?.data,
-        });
+        console.error(
+          "🔥 AUDIO UPLOAD ERROR:",
+          error.response?.status,
+          error.response?.data
+        );
 
         alert(
           error.response?.data?.message ||
+            error.response?.data?.error ||
             "Audio upload failed"
         );
       } else {
@@ -370,16 +427,27 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
 
         alert("Audio upload failed");
       }
+
+      // Clear failed audio
+      setAudioFile(null);
+      setAudioUrl("");
     } finally {
       setIsLoading(false);
-      URL.revokeObjectURL(audioUrl);
+      URL.revokeObjectURL(objectUrl);
+
+      // Allow selecting same file again
+      e.target.value = "";
     }
   };
 
   audio.onerror = () => {
     alert("Unable to read this audio file");
-    URL.revokeObjectURL(audioUrl);
+
+    URL.revokeObjectURL(objectUrl);
+
     setIsLoading(false);
+
+    e.target.value = "";
   };
 };
 
@@ -491,13 +559,15 @@ const TweetComposer = ({ onTweetPosted }: TweetComposerProps) => {
                       variant="ghost"
                       size="sm"
                       className="p-2 rounded-full hover:bg-blue-900/20"
-                      onClick={() => {
-                        if (!otpVerified) {
-                          sendOtp();
-                        } else {
-                          audioInputRef.current?.click();
-                        }
-                      }}
+                     onClick={() => {
+  if (isLoading) return;
+
+  if (!otpVerified) {
+    sendOtp();
+  } else {
+    audioInputRef.current?.click();
+  }
+}}
                     >
                       <Mic className="h-5 w-5" />
                     </Button>
