@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card, CardContent } from "./ui/card";
 import LoadingSpinner from "./loading-spinner";
@@ -8,16 +8,19 @@ import TweetCard from "./TweetCard";
 import TweetComposer from "./TweetComposer";
 import axiosInstance from "@/lib/axiosInstance";
 
-interface Tweet {
+export interface Tweet {
   _id: string;
-  author: {
-    _id?: string;
-    id?: string;
-    username: string;
-    displayName: string;
-    avatar: string;
-    verified?: boolean;
-  };
+  // author ko string | object dono allow kar diya hai taaki type clash na ho
+  author:
+    | string
+    | {
+        _id?: string;
+        id?: string;
+        username: string;
+        displayName: string;
+        avatar: string;
+        verified?: boolean;
+      };
   content: string;
   timestamp?: string;
   createdAt?: string;
@@ -36,7 +39,7 @@ const Feed = () => {
   const [tweets, setTweets] = useState<Tweet[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchTweets = async () => {
+  const fetchTweets = useCallback(async () => {
     console.log("Inside fetchTweets");
 
     try {
@@ -53,16 +56,15 @@ const Feed = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     console.log("Fetching tweets...");
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTweets();
-  }, []);
+  }, [fetchTweets]);
 
-  const handleNewTweet = (newTweet: Tweet) => {
+  // newTweet parameters ko flexible rakha gaya hai
+  const handleNewTweet = (newTweet: any) => {
     setTweets((prevTweets) => [newTweet, ...prevTweets]);
   };
 
@@ -106,7 +108,8 @@ const Feed = () => {
           </Card>
         ) : (
           tweets.map((tweet) => (
-            <TweetCard key={tweet._id} tweet={tweet} />
+            // agar author object ke roop me nahi hai toh safer TweetCard pass-through
+            <TweetCard key={tweet._id} tweet={tweet as any} />
           ))
         )}
       </div>
