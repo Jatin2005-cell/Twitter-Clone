@@ -338,11 +338,14 @@ app.post("/send-login-otp", async (req, res) => {
 
     if (!email) {
       return res.status(400).json({
+        success: false,
         message: "Email is required",
       });
     }
 
-    const emailKey = String(email).toLowerCase();
+    const emailKey = String(email)
+      .trim()
+      .toLowerCase();
 
     const user = await User.findOne({
       email: emailKey,
@@ -350,6 +353,7 @@ app.post("/send-login-otp", async (req, res) => {
 
     if (!user) {
       return res.status(404).json({
+        success: false,
         message: "User not found",
       });
     }
@@ -358,9 +362,12 @@ app.post("/send-login-otp", async (req, res) => {
 
     otpStore.set(emailKey, {
       otp,
-      expiresAt:
-        Date.now() + 5 * 60 * 1000,
+      expiresAt: Date.now() + 5 * 60 * 1000,
     });
+
+    console.log(
+      `📧 Sending LOGIN OTP to ${emailKey}: ${otp}`
+    );
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
@@ -368,22 +375,36 @@ app.post("/send-login-otp", async (req, res) => {
       subject: "Twiller Login OTP",
 
       html: `
-        <h2>Twiller Login Verification</h2>
+        <div style="font-family: Arial, sans-serif;">
+          <h2>Twiller Login Verification</h2>
 
-        <p>Your OTP is:</p>
+          <p>Your login OTP is:</p>
 
-        <h1>${otp}</h1>
+          <h1 style="letter-spacing: 8px;">
+            ${otp}
+          </h1>
 
-        <p>
-          This OTP is valid for 5 minutes.
-        </p>
+          <p>
+            This OTP is valid for 5 minutes.
+          </p>
+
+          <p>
+            If you did not attempt to login,
+            please ignore this email.
+          </p>
+        </div>
       `,
     });
+
+    console.log(
+      `✅ LOGIN OTP email sent successfully to ${emailKey}`
+    );
 
     return res.status(200).json({
       success: true,
       message: "OTP sent successfully",
     });
+
   } catch (error) {
     console.error(
       "🔥 LOGIN OTP ERROR:",

@@ -36,8 +36,8 @@ interface User {
 
   preferredLanguage?: "en" | "hi" | "es" | "pt" | "fr" | "zh";
 
-  otpPending: boolean;
-  otpEmail: string;
+  otpPending?: boolean;
+  otpEmail?: string;
 
   loginHistory?: {
     browser: string;
@@ -112,26 +112,50 @@ export const AuthProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
 
   const [otpPending, setOtpPending] = useState(false);
   const [otpEmail, setOtpEmail] = useState("");
 
-  // =====================================================
-  // OTP PENDING REF
-  // =====================================================
-
+  /*
+   * This ref is important.
+   *
+   * Firebase can restore its session before React finishes
+   * restoring localStorage. Therefore we keep the pending
+   * OTP email in a ref as well.
+   */
   const pendingOtpEmailRef = useRef<string | null>(null);
 
+  /*
+   * Prevent Firebase listener from restoring backend user
+   * while login OTP is still pending.
+   */
+  const otpVerifiedRef = useRef(false);
+
   // =====================================================
-  // OTP LOCAL STORAGE HELPERS
+  // STORAGE HELPERS
   // =====================================================
 
   const saveOtpPending = (email: string) => {
     if (typeof window === "undefined") return;
 
+    const cleanEmail = email.trim().toLowerCase();
+
     localStorage.setItem("otp-pending", "true");
-    localStorage.setItem("otp-email", email);
+    localStorage.setItem("otp-email", cleanEmail);
+
+    /*
+     * sessionStorage is additional protection for the current
+     * browser tab.
+     */
+    sessionStorage.setItem("otp-pending", "true");
+    sessionStorage.setItem("otp-email", cleanEmail);
+
+    console.log(
+      "💾 OTP pending state saved:",
+      cleanEmail
+    );
   };
 
   const clearOtpPending = () => {
@@ -139,6 +163,51 @@ export const AuthProvider: React.FC<{
 
     localStorage.removeItem("otp-pending");
     localStorage.removeItem("otp-email");
+
+    sessionStorage.removeItem("otp-pending");
+    sessionStorage.removeItem("otp-email");
+
+    console.log("🧹 OTP pending state cleared");
+  };
+
+  const getSavedOtpEmail = (): string | null => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    /*
+     * Check localStorage first.
+     */
+    const localPending =
+      localStorage.getItem("otp-pending");
+
+    const localEmail =
+      localStorage.getItem("otp-email");
+
+    if (
+      localPending === "true" &&
+      localEmail
+    ) {
+      return localEmail.trim().toLowerCase();
+    }
+
+    /*
+     * Fallback to sessionStorage.
+     */
+    const sessionPending =
+      sessionStorage.getItem("otp-pending");
+
+    const sessionEmail =
+      sessionStorage.getItem("otp-email");
+
+    if (
+      sessionPending === "true" &&
+      sessionEmail
+    ) {
+      return sessionEmail.trim().toLowerCase();
+    }
+
+    return null;
   };
 
   // =====================================================
@@ -146,130 +215,120 @@ export const AuthProvider: React.FC<{
   // =====================================================
 
   useEffect(() => {
-    // -----------------------------------------------------
-    // RESTORE OTP PENDING STATE FIRST
-    // -----------------------------------------------------
+    let mounted = true;
 
-    if (typeof window !== "undefined") {
-      const savedOtpPending =
-        localStorage.getItem("otp-pending");
+    /*
+     * IMPORTANT:
+     *
+     * Restore OTP state synchronously before Firebase
+     * listener starts doing backend authentication.
+     */
+    const savedOtpEmail = getSavedOtpEmail();
 
-      const savedOtpEmail =
-        localStorage.getItem("otp-email");
-
-      if (
-        savedOtpPending === "true" &&
+    if (savedOtpEmail) {
+      console.log(
+        "⏳ Restoring OTP pending state:",
         savedOtpEmail
-      ) {
-        console.log(
-          "⏳ Restoring OTP pending state:",
-          savedOtpEmail
-        );
+      );
 
-        pendingOtpEmailRef.current =
-          savedOtpEmail;
+      pendingOtpEmailRef.current =
+        savedOtpEmail;
 
-        setOtpPending(true);
-        setOtpEmail(savedOtpEmail);
-      }
+      otpVerifiedRef.current = false;
+
+      setOtpPending(true);
+      setOtpEmail(savedOtpEmail);
     }
-
-    // -----------------------------------------------------
-    // FIREBASE LISTENER
-    // -----------------------------------------------------
 
     const unsubscribe = onAuthStateChanged(
       auth,
       async (firebaseUser) => {
+        if (!mounted) return;
+
         console.log(
           "🔥 Firebase auth state:",
-          firebaseUser?.email || "logged out"
+          firebaseUser?.email ||
+            "logged out"
         );
 
-        // =================================================
-        // OTP VERIFICATION PENDING
-        // =================================================
-
         const pendingEmail =
-          pendingOtpEmailRef.current;
+          pendingOtpEmailRef.current ||
+          getSavedOtpEmail();
+
+        /*
+         * =================================================
+         * OTP PENDING HAS HIGHEST PRIORITY
+         * =================================================
+         */
 
         if (
           firebaseUser?.email &&
           pendingEmail &&
-          firebaseUser.email.toLowerCase() ===
-            pendingEmail.toLowerCase()
+          !otpVerifiedRef.current &&
+          firebaseUser.email
+            .trim()
+            .toLowerCase() ===
+            pendingEmail
+              .trim()
+              .toLowerCase()
         ) {
           console.log(
-            "⏳ OTP verification pending. Skipping normal auth."
+            "⏳ OTP pending detected."
+          );
+
+          console.log(
+            "🚫 Skipping automatic backend authentication."
+          );
+
+          pendingOtpEmailRef.current =
+            pendingEmail;
+
+          setOtpEmail(
+            firebaseUser.email
           );
 
           setOtpPending(true);
-          setOtpEmail(firebaseUser.email);
+
+          /*
+           * VERY IMPORTANT:
+           *
+           * User must NOT be set here.
+           */
+          setUser(null);
 
           setIsLoading(false);
 
           return;
         }
 
-        // =================================================
-        // EXTRA SAFETY:
-        // CHECK LOCAL STORAGE OTP STATE
-        // =================================================
-
-        if (
-          typeof window !== "undefined" &&
-          firebaseUser?.email
-        ) {
-          const savedOtpPending =
-            localStorage.getItem(
-              "otp-pending"
-            );
-
-          const savedOtpEmail =
-            localStorage.getItem(
-              "otp-email"
-            );
-
-          if (
-            savedOtpPending === "true" &&
-            savedOtpEmail &&
-            firebaseUser.email.toLowerCase() ===
-              savedOtpEmail.toLowerCase()
-          ) {
-            console.log(
-              "⏳ OTP pending restored from localStorage. Skipping normal auth."
-            );
-
-            pendingOtpEmailRef.current =
-              savedOtpEmail;
-
-            setOtpPending(true);
-            setOtpEmail(savedOtpEmail);
-
-            setIsLoading(false);
-
-            return;
-          }
-        }
-
-        // =================================================
-        // NO FIREBASE USER
-        // =================================================
+        /*
+         * =================================================
+         * NO FIREBASE USER
+         * =================================================
+         */
 
         if (!firebaseUser) {
+          console.log(
+            "🚪 No Firebase user"
+          );
+
           setUser(null);
 
-          pendingOtpEmailRef.current = null;
+          pendingOtpEmailRef.current =
+            null;
+
+          otpVerifiedRef.current =
+            false;
 
           setOtpPending(false);
           setOtpEmail("");
+
+          clearOtpPending();
 
           if (typeof window !== "undefined") {
             localStorage.removeItem(
               "twitter-user"
             );
-
-            clearOtpPending();
           }
 
           setIsLoading(false);
@@ -277,9 +336,13 @@ export const AuthProvider: React.FC<{
           return;
         }
 
-        // =================================================
-        // EXISTING AUTHENTICATED SESSION
-        // =================================================
+        /*
+         * =================================================
+         * NORMAL EXISTING SESSION
+         * =================================================
+         *
+         * This only runs when OTP is NOT pending.
+         */
 
         try {
           await requestNotificationPermission();
@@ -289,14 +352,19 @@ export const AuthProvider: React.FC<{
               "/loggedinuser",
               {
                 params: {
-                  email: firebaseUser.email,
-                  uid: firebaseUser.uid,
+                  email:
+                    firebaseUser.email,
+                  uid:
+                    firebaseUser.uid,
                 },
               }
             );
 
+          if (!mounted) return;
+
           const backendUser =
-            res.data?.user || res.data;
+            res.data?.user ||
+            res.data;
 
           if (backendUser?._id) {
             console.log(
@@ -321,13 +389,18 @@ export const AuthProvider: React.FC<{
             "❌ Existing session restore failed:",
             error
           );
+
+          setUser(null);
         }
 
-        setIsLoading(false);
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     );
 
     return () => {
+      mounted = false;
       unsubscribe();
     };
   }, []);
@@ -355,21 +428,41 @@ export const AuthProvider: React.FC<{
         );
       }
 
-      // -------------------------------------------------
-      // IMPORTANT:
-      // Set BEFORE Firebase login.
-      // -------------------------------------------------
+      /*
+       * =================================================
+       * SET OTP PENDING BEFORE FIREBASE LOGIN
+       * =================================================
+       *
+       * This prevents Firebase's auth listener from
+       * immediately opening the dashboard.
+       */
 
       pendingOtpEmailRef.current =
         cleanEmail;
 
+      otpVerifiedRef.current = false;
+
+      setUser(null);
+
+      setOtpEmail(cleanEmail);
+      setOtpPending(true);
+
+      saveOtpPending(cleanEmail);
+
+      console.log(
+        "⏳ OTP flow initialized for:",
+        cleanEmail
+      );
+
+      /*
+       * =================================================
+       * FIREBASE LOGIN
+       * =================================================
+       */
+
       console.log(
         "🔐 Starting Firebase password login..."
       );
-
-      // -------------------------------------------------
-      // FIREBASE LOGIN
-      // -------------------------------------------------
 
       const usercred =
         await signInWithEmailAndPassword(
@@ -382,26 +475,21 @@ export const AuthProvider: React.FC<{
         usercred.user;
 
       if (!firebaseUser.email) {
-        pendingOtpEmailRef.current =
-          null;
-
-        clearOtpPending();
-
-        await signOut(auth);
-
         throw new Error(
           "Email not found in Firebase account."
         );
       }
 
       console.log(
-        "✅ Firebase login successful:",
+        "🔥 Firebase login successful:",
         firebaseUser.email
       );
 
-      // -------------------------------------------------
-      // BACKEND USER CHECK
-      // -------------------------------------------------
+      /*
+       * =================================================
+       * BACKEND USER CHECK
+       * =================================================
+       */
 
       const browserName =
         typeof navigator !== "undefined"
@@ -415,8 +503,10 @@ export const AuthProvider: React.FC<{
             params: {
               email:
                 firebaseUser.email,
-              uid: firebaseUser.uid,
-              browser: browserName,
+              uid:
+                firebaseUser.uid,
+              browser:
+                browserName,
             },
           }
         );
@@ -427,30 +517,10 @@ export const AuthProvider: React.FC<{
       );
 
       const backendUser =
-        res.data?.user || res.data;
-
-      // -------------------------------------------------
-      // VALIDATE BACKEND USER
-      // -------------------------------------------------
+        res.data?.user ||
+        res.data;
 
       if (!backendUser?._id) {
-        pendingOtpEmailRef.current =
-          null;
-
-        clearOtpPending();
-
-        await signOut(auth);
-
-        setUser(null);
-
-        if (
-          typeof window !== "undefined"
-        ) {
-          localStorage.removeItem(
-            "twitter-user"
-          );
-        }
-
         throw new Error(
           "User profile not found. Please register this account first."
         );
@@ -461,9 +531,11 @@ export const AuthProvider: React.FC<{
         backendUser.email
       );
 
-      // -------------------------------------------------
-      // LOGIN HISTORY
-      // -------------------------------------------------
+      /*
+       * =================================================
+       * LOGIN HISTORY
+       * =================================================
+       */
 
       try {
         await axiosInstance.post(
@@ -471,7 +543,8 @@ export const AuthProvider: React.FC<{
           {
             email:
               firebaseUser.email,
-            browser: browserName,
+            browser:
+              browserName,
           }
         );
 
@@ -487,28 +560,59 @@ export const AuthProvider: React.FC<{
         );
       }
 
-      // -------------------------------------------------
-      // SEND LOGIN OTP
-      // -------------------------------------------------
-
-      await axiosInstance.post(
-        "/send-login-otp",
-        {
-          email:
-            firebaseUser.email,
-        }
-      );
+      /*
+       * =================================================
+       * SEND LOGIN OTP
+       * =================================================
+       */
 
       console.log(
-        "📧 Login OTP sent successfully"
+        "📧 Sending login OTP..."
       );
 
-      // -------------------------------------------------
-      // SAVE OTP PENDING STATE
-      // -------------------------------------------------
+      const otpResponse =
+        await axiosInstance.post(
+          "/send-login-otp",
+          {
+            email:
+              firebaseUser.email,
+          }
+        );
+
+      console.log(
+        "📧 Login OTP API response:",
+        otpResponse.data
+      );
+
+      if (
+        otpResponse.data?.success === false
+      ) {
+        throw new Error(
+          otpResponse.data?.message ||
+            "Failed to send login OTP."
+        );
+      }
+
+      console.log(
+        "✅ Login OTP sent successfully"
+      );
+
+      /*
+       * =================================================
+       * SAVE OTP STATE AGAIN
+       * =================================================
+       *
+       * We do this AFTER the API succeeds as well.
+       */
 
       pendingOtpEmailRef.current =
-        firebaseUser.email;
+        firebaseUser.email
+          .trim()
+          .toLowerCase();
+
+      otpVerifiedRef.current = false;
+
+      setUser(null);
 
       setOtpEmail(
         firebaseUser.email
@@ -516,21 +620,19 @@ export const AuthProvider: React.FC<{
 
       setOtpPending(true);
 
-      // IMPORTANT:
-      // Persist because deployed page refresh
-      // destroys React state.
-
       saveOtpPending(
         firebaseUser.email
       );
 
       console.log(
-        "⏳ OTP pending state saved"
+        "📧 OTP popup should now be visible"
       );
 
-      // -------------------------------------------------
-      // RETURN OTP REQUIREMENT
-      // -------------------------------------------------
+      /*
+       * =================================================
+       * RETURN
+       * =================================================
+       */
 
       return {
         requireOtp: true,
@@ -545,23 +647,31 @@ export const AuthProvider: React.FC<{
           error
       );
 
-      // -------------------------------------------------
-      // CANCEL OTP STATE
-      // -------------------------------------------------
+      /*
+       * Clear OTP state on genuine login failure.
+       */
 
       pendingOtpEmailRef.current =
         null;
+
+      otpVerifiedRef.current =
+        false;
 
       setOtpPending(false);
       setOtpEmail("");
 
       clearOtpPending();
 
+      setUser(null);
+
       try {
         await signOut(auth);
-      } catch {}
-
-      setUser(null);
+      } catch (signOutError) {
+        console.warn(
+          "Firebase signout after login error:",
+          signOutError
+        );
+      }
 
       throw error;
     } finally {
@@ -580,21 +690,31 @@ export const AuthProvider: React.FC<{
       "🎉 OTP VERIFIED - AUTHENTICATING USER"
     );
 
-    // -------------------------------------------------
-    // REMOVE OTP PENDING STATE
-    // -------------------------------------------------
+    /*
+     * IMPORTANT:
+     *
+     * Mark OTP verified BEFORE changing user state.
+     * This prevents Firebase listener from treating the
+     * authenticated Firebase session as OTP-pending.
+     */
+
+    otpVerifiedRef.current = true;
 
     pendingOtpEmailRef.current =
       null;
+
+    /*
+     * Clear OTP state first.
+     */
 
     setOtpPending(false);
     setOtpEmail("");
 
     clearOtpPending();
 
-    // -------------------------------------------------
-    // AUTHENTICATE USER
-    // -------------------------------------------------
+    /*
+     * Now authenticate backend user.
+     */
 
     setUser(authenticatedUser);
 
@@ -641,11 +761,14 @@ export const AuthProvider: React.FC<{
       const newuser = {
         username,
         displayName,
+
         avatar:
           firebaseUser.photoURL ||
           "https://images.pexels.com/photos/1139743/pexels-photo-1139743.jpeg?auto=compress&cs=tinysrgb&w=400",
+
         email:
           firebaseUser.email,
+
         uid:
           firebaseUser.uid,
       };
@@ -657,7 +780,8 @@ export const AuthProvider: React.FC<{
         );
 
       const backendUser =
-        res.data?.user || res.data;
+        res.data?.user ||
+        res.data;
 
       if (!backendUser?._id) {
         throw new Error(
@@ -695,8 +819,15 @@ export const AuthProvider: React.FC<{
 
   const logout = async () => {
     try {
+      console.log(
+        "🚪 Starting logout..."
+      );
+
       pendingOtpEmailRef.current =
         null;
+
+      otpVerifiedRef.current =
+        false;
 
       setOtpPending(false);
       setOtpEmail("");
@@ -705,8 +836,6 @@ export const AuthProvider: React.FC<{
 
       setUser(null);
 
-      await signOut(auth);
-
       if (
         typeof window !== "undefined"
       ) {
@@ -714,6 +843,8 @@ export const AuthProvider: React.FC<{
           "twitter-user"
         );
       }
+
+      await signOut(auth);
 
       console.log(
         "✅ Logout successful"
