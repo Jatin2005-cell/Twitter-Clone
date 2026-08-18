@@ -491,107 +491,71 @@ app.post("/verify-login-otp", async (req, res) => {
    LANGUAGE CHANGE OTP
 ========================================================= */
 
-app.post(
-  "/request-language-change",
-  async (req, res) => {
-    try {
-      const {
-        email,
-        phoneNumber,
-        language,
-      } = req.body;
+app.post("/request-language-change", async (req, res) => {
+  try {
+    const { email, language } = req.body;
 
-      const user = await User.findOne({
-        $or: [
-          {
-            email: email || "",
-          },
-          {
-            phoneNumber:
-              phoneNumber || "",
-          },
-        ],
-      });
+    const user = await User.findOne({
+      email: email || "",
+    });
 
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      const otp = generateOTP();
-
-      user.otp = otp;
-
-      user.otpExpiry = new Date(
-        Date.now() + 5 * 60 * 1000
-      );
-
-      await user.save();
-
-      if (language === "fr") {
-        if (!user.email) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "No registered email found.",
-          });
-        }
-
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: user.email,
-
-          subject:
-            "Twiller Language Change OTP",
-
-          text: `
-Your OTP for changing the language is ${otp}.
-This OTP is valid for 5 minutes.
-          `,
-        });
-
-        return res.status(200).json({
-          success: true,
-          message:
-            "OTP sent to your registered email.",
-          method: "email",
-        });
-      }
-
-      if (!user.phoneNumber) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "No registered phone number found.",
-        });
-      }
-
-      console.log(
-        `SMS OTP for ${user.phoneNumber}: ${otp}`
-      );
-
-      return res.status(200).json({
-        success: true,
-        message:
-          "OTP sent to your registered phone number.",
-        method: "phone",
-      });
-    } catch (error) {
-      console.error(
-        "Language OTP error:",
-        error
-      );
-
-      return res.status(500).json({
+    if (!user) {
+      return res.status(404).json({
         success: false,
-        message:
-          "Failed to send language change OTP",
+        message: "User not found",
       });
     }
+
+    if (!user.email) {
+      return res.status(400).json({
+        success: false,
+        message: "No registered email found.",
+      });
+    }
+
+    const otp = generateOTP();
+
+    user.otp = otp;
+    user.otpExpiry = new Date(
+      Date.now() + 5 * 60 * 1000
+    );
+
+    await user.save();
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: user.email,
+      subject: "Twiller Language Change OTP",
+      text: `
+Your OTP for changing the language is ${otp}.
+
+This OTP is valid for 5 minutes.
+
+If you did not request a language change, please ignore this email.
+      `,
+    });
+
+    console.log(
+      `✅ Language change OTP sent to ${user.email}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent to your registered email.",
+      method: "email",
+    });
+  } catch (error) {
+    console.error(
+      "❌ Language OTP error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send language change OTP",
+    });
   }
-);
+});
 
 /* =========================================================
    VERIFY LANGUAGE OTP

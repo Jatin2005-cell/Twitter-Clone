@@ -27,28 +27,23 @@ export default function LanguageSelector() {
   const [openOtpModal, setOpenOtpModal] = useState(false);
 
   const requestLanguageChange = async (lang: Language) => {
-    try {
-      await axiosInstance.post("/request-language-change", {
-        email: user?.email,
-        phoneNumber: user?.phoneNumber,
-        language: lang,
-      });
+  try {
+    await axiosInstance.post("/request-language-change", {
+      email: user?.email,
+      language: lang,
+    });
 
-      alert(
-        lang === "fr"
-          ? "OTP sent to your registered email."
-          : "OTP sent to your registered phone."
-      );
+    alert("OTP sent to your registered email.");
 
-      setSelectedLanguage(lang);
-      setOpenOtpModal(true);
-    } catch (err: any) {
-      alert(
-        err.response?.data?.message ||
-          "Failed to send OTP."
-      );
-    }
-  };
+    setSelectedLanguage(lang);
+    setOpenOtpModal(true);
+  } catch (err: any) {
+    alert(
+      err.response?.data?.message ||
+        "Failed to send OTP."
+    );
+  }
+};
 
   return (
     <>

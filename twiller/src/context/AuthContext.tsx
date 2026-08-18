@@ -33,9 +33,12 @@ interface User {
   location: string;
   notificationsEnabled: boolean;
   phoneNumber?: string;
+
   preferredLanguage?: "en" | "hi" | "es" | "pt" | "fr" | "zh";
+
   otpPending: boolean;
   otpEmail: string;
+
   loginHistory?: {
     browser: string;
     operatingSystem: string;
@@ -84,6 +87,7 @@ interface AuthContextType {
   updatePreferredLanguage: (
     language: "en" | "hi" | "es" | "pt" | "fr" | "zh"
   ) => void;
+
   otpPending: boolean;
   otpEmail: string;
 }
@@ -109,20 +113,71 @@ export const AuthProvider: React.FC<{
 }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
   const [otpPending, setOtpPending] = useState(false);
-const [otpEmail, setOtpEmail] = useState("");
+  const [otpEmail, setOtpEmail] = useState("");
 
   // =====================================================
-  // OTP PENDING STATE
+  // OTP PENDING REF
   // =====================================================
 
   const pendingOtpEmailRef = useRef<string | null>(null);
+
+  // =====================================================
+  // OTP LOCAL STORAGE HELPERS
+  // =====================================================
+
+  const saveOtpPending = (email: string) => {
+    if (typeof window === "undefined") return;
+
+    localStorage.setItem("otp-pending", "true");
+    localStorage.setItem("otp-email", email);
+  };
+
+  const clearOtpPending = () => {
+    if (typeof window === "undefined") return;
+
+    localStorage.removeItem("otp-pending");
+    localStorage.removeItem("otp-email");
+  };
 
   // =====================================================
   // FIREBASE AUTH STATE
   // =====================================================
 
   useEffect(() => {
+    // -----------------------------------------------------
+    // RESTORE OTP PENDING STATE FIRST
+    // -----------------------------------------------------
+
+    if (typeof window !== "undefined") {
+      const savedOtpPending =
+        localStorage.getItem("otp-pending");
+
+      const savedOtpEmail =
+        localStorage.getItem("otp-email");
+
+      if (
+        savedOtpPending === "true" &&
+        savedOtpEmail
+      ) {
+        console.log(
+          "⏳ Restoring OTP pending state:",
+          savedOtpEmail
+        );
+
+        pendingOtpEmailRef.current =
+          savedOtpEmail;
+
+        setOtpPending(true);
+        setOtpEmail(savedOtpEmail);
+      }
+    }
+
+    // -----------------------------------------------------
+    // FIREBASE LISTENER
+    // -----------------------------------------------------
+
     const unsubscribe = onAuthStateChanged(
       auth,
       async (firebaseUser) => {
@@ -131,57 +186,114 @@ const [otpEmail, setOtpEmail] = useState("");
           firebaseUser?.email || "logged out"
         );
 
-        // -------------------------------------------------
-        // IMPORTANT:
-        // Firebase password login is complete,
-        // BUT application login is NOT complete until OTP.
-        // -------------------------------------------------
+        // =================================================
+        // OTP VERIFICATION PENDING
+        // =================================================
+
+        const pendingEmail =
+          pendingOtpEmailRef.current;
 
         if (
           firebaseUser?.email &&
-          pendingOtpEmailRef.current &&
+          pendingEmail &&
           firebaseUser.email.toLowerCase() ===
-            pendingOtpEmailRef.current.toLowerCase()
+            pendingEmail.toLowerCase()
         ) {
           console.log(
             "⏳ OTP verification pending. Skipping normal auth."
           );
 
+          setOtpPending(true);
+          setOtpEmail(firebaseUser.email);
+
           setIsLoading(false);
+
           return;
         }
 
-        // -------------------------------------------------
+        // =================================================
+        // EXTRA SAFETY:
+        // CHECK LOCAL STORAGE OTP STATE
+        // =================================================
+
+        if (
+          typeof window !== "undefined" &&
+          firebaseUser?.email
+        ) {
+          const savedOtpPending =
+            localStorage.getItem(
+              "otp-pending"
+            );
+
+          const savedOtpEmail =
+            localStorage.getItem(
+              "otp-email"
+            );
+
+          if (
+            savedOtpPending === "true" &&
+            savedOtpEmail &&
+            firebaseUser.email.toLowerCase() ===
+              savedOtpEmail.toLowerCase()
+          ) {
+            console.log(
+              "⏳ OTP pending restored from localStorage. Skipping normal auth."
+            );
+
+            pendingOtpEmailRef.current =
+              savedOtpEmail;
+
+            setOtpPending(true);
+            setOtpEmail(savedOtpEmail);
+
+            setIsLoading(false);
+
+            return;
+          }
+        }
+
+        // =================================================
         // NO FIREBASE USER
-        // -------------------------------------------------
+        // =================================================
 
         if (!firebaseUser) {
           setUser(null);
 
+          pendingOtpEmailRef.current = null;
+
+          setOtpPending(false);
+          setOtpEmail("");
+
           if (typeof window !== "undefined") {
-            localStorage.removeItem("twitter-user");
+            localStorage.removeItem(
+              "twitter-user"
+            );
+
+            clearOtpPending();
           }
 
           setIsLoading(false);
+
           return;
         }
 
-        // -------------------------------------------------
+        // =================================================
         // EXISTING AUTHENTICATED SESSION
-        // -------------------------------------------------
+        // =================================================
 
         try {
           await requestNotificationPermission();
 
-          const res = await axiosInstance.get(
-            "/loggedinuser",
-            {
-              params: {
-                email: firebaseUser.email,
-                uid: firebaseUser.uid,
-              },
-            }
-          );
+          const res =
+            await axiosInstance.get(
+              "/loggedinuser",
+              {
+                params: {
+                  email: firebaseUser.email,
+                  uid: firebaseUser.uid,
+                },
+              }
+            );
 
           const backendUser =
             res.data?.user || res.data;
@@ -193,10 +305,16 @@ const [otpEmail, setOtpEmail] = useState("");
 
             setUser(backendUser);
 
-            localStorage.setItem(
-              "twitter-user",
-              JSON.stringify(backendUser)
-            );
+            if (
+              typeof window !== "undefined"
+            ) {
+              localStorage.setItem(
+                "twitter-user",
+                JSON.stringify(
+                  backendUser
+                )
+              );
+            }
           }
         } catch (error) {
           console.error(
@@ -227,7 +345,8 @@ const [otpEmail, setOtpEmail] = useState("");
   }> => {
     setIsLoading(true);
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail =
+      email.trim().toLowerCase();
 
     try {
       if (!cleanEmail || !password) {
@@ -238,19 +357,18 @@ const [otpEmail, setOtpEmail] = useState("");
 
       // -------------------------------------------------
       // IMPORTANT:
-      // Set this BEFORE Firebase login.
-      // onAuthStateChanged will see this and stop
-      // automatic authentication.
+      // Set BEFORE Firebase login.
       // -------------------------------------------------
 
-      pendingOtpEmailRef.current = cleanEmail;
+      pendingOtpEmailRef.current =
+        cleanEmail;
 
       console.log(
         "🔐 Starting Firebase password login..."
       );
 
       // -------------------------------------------------
-      // 1. FIREBASE LOGIN
+      // FIREBASE LOGIN
       // -------------------------------------------------
 
       const usercred =
@@ -260,10 +378,14 @@ const [otpEmail, setOtpEmail] = useState("");
           password
         );
 
-      const firebaseUser = usercred.user;
+      const firebaseUser =
+        usercred.user;
 
       if (!firebaseUser.email) {
-        pendingOtpEmailRef.current = null;
+        pendingOtpEmailRef.current =
+          null;
+
+        clearOtpPending();
 
         await signOut(auth);
 
@@ -278,7 +400,7 @@ const [otpEmail, setOtpEmail] = useState("");
       );
 
       // -------------------------------------------------
-      // 2. BACKEND USER CHECK
+      // BACKEND USER CHECK
       // -------------------------------------------------
 
       const browserName =
@@ -286,16 +408,18 @@ const [otpEmail, setOtpEmail] = useState("");
           ? navigator.userAgent
           : "Unknown";
 
-      const res = await axiosInstance.get(
-        "/loggedinuser",
-        {
-          params: {
-            email: firebaseUser.email,
-            uid: firebaseUser.uid,
-            browser: browserName,
-          },
-        }
-      );
+      const res =
+        await axiosInstance.get(
+          "/loggedinuser",
+          {
+            params: {
+              email:
+                firebaseUser.email,
+              uid: firebaseUser.uid,
+              browser: browserName,
+            },
+          }
+        );
 
       console.log(
         "✅ Backend login response:",
@@ -306,19 +430,26 @@ const [otpEmail, setOtpEmail] = useState("");
         res.data?.user || res.data;
 
       // -------------------------------------------------
-      // 3. VALIDATE BACKEND USER
+      // VALIDATE BACKEND USER
       // -------------------------------------------------
 
       if (!backendUser?._id) {
-        pendingOtpEmailRef.current = null;
+        pendingOtpEmailRef.current =
+          null;
+
+        clearOtpPending();
 
         await signOut(auth);
 
         setUser(null);
 
-        localStorage.removeItem(
-          "twitter-user"
-        );
+        if (
+          typeof window !== "undefined"
+        ) {
+          localStorage.removeItem(
+            "twitter-user"
+          );
+        }
 
         throw new Error(
           "User profile not found. Please register this account first."
@@ -331,14 +462,15 @@ const [otpEmail, setOtpEmail] = useState("");
       );
 
       // -------------------------------------------------
-      // 4. LOGIN HISTORY
+      // LOGIN HISTORY
       // -------------------------------------------------
 
       try {
         await axiosInstance.post(
           "/login-history",
           {
-            email: firebaseUser.email,
+            email:
+              firebaseUser.email,
             browser: browserName,
           }
         );
@@ -349,29 +481,21 @@ const [otpEmail, setOtpEmail] = useState("");
       } catch (historyError: any) {
         console.warn(
           "⚠️ Login history failed:",
-          historyError?.response?.data ||
+          historyError?.response
+            ?.data ||
             historyError?.message
         );
       }
 
       // -------------------------------------------------
-      // VERY IMPORTANT
-      //
-      // DO NOT:
-      //
-      // setUser(backendUser)
-      //
-      // User is still waiting for OTP.
-      // -------------------------------------------------
-
-      // -------------------------------------------------
-      // 5. SEND LOGIN OTP
+      // SEND LOGIN OTP
       // -------------------------------------------------
 
       await axiosInstance.post(
         "/send-login-otp",
         {
-          email: firebaseUser.email,
+          email:
+            firebaseUser.email,
         }
       );
 
@@ -380,13 +504,38 @@ const [otpEmail, setOtpEmail] = useState("");
       );
 
       // -------------------------------------------------
-      // 6. RETURN OTP REQUIREMENT
+      // SAVE OTP PENDING STATE
       // -------------------------------------------------
-       setOtpEmail(firebaseUser.email);
-       setOtpPending(true);  
+
+      pendingOtpEmailRef.current =
+        firebaseUser.email;
+
+      setOtpEmail(
+        firebaseUser.email
+      );
+
+      setOtpPending(true);
+
+      // IMPORTANT:
+      // Persist because deployed page refresh
+      // destroys React state.
+
+      saveOtpPending(
+        firebaseUser.email
+      );
+
+      console.log(
+        "⏳ OTP pending state saved"
+      );
+
+      // -------------------------------------------------
+      // RETURN OTP REQUIREMENT
+      // -------------------------------------------------
+
       return {
         requireOtp: true,
-        email: firebaseUser.email,
+        email:
+          firebaseUser.email,
       };
     } catch (error: any) {
       console.error(
@@ -396,10 +545,17 @@ const [otpEmail, setOtpEmail] = useState("");
           error
       );
 
-      // If login completely fails,
-      // cancel OTP pending state.
+      // -------------------------------------------------
+      // CANCEL OTP STATE
+      // -------------------------------------------------
 
-      pendingOtpEmailRef.current = null;
+      pendingOtpEmailRef.current =
+        null;
+
+      setOtpPending(false);
+      setOtpEmail("");
+
+      clearOtpPending();
 
       try {
         await signOut(auth);
@@ -424,17 +580,32 @@ const [otpEmail, setOtpEmail] = useState("");
       "🎉 OTP VERIFIED - AUTHENTICATING USER"
     );
 
-    // First remove OTP pending state
-    pendingOtpEmailRef.current = null;
+    // -------------------------------------------------
+    // REMOVE OTP PENDING STATE
+    // -------------------------------------------------
+
+    pendingOtpEmailRef.current =
+      null;
+
     setOtpPending(false);
-     setOtpEmail("");
-    // Now application is actually logged in
+    setOtpEmail("");
+
+    clearOtpPending();
+
+    // -------------------------------------------------
+    // AUTHENTICATE USER
+    // -------------------------------------------------
+
     setUser(authenticatedUser);
 
-    if (typeof window !== "undefined") {
+    if (
+      typeof window !== "undefined"
+    ) {
       localStorage.setItem(
         "twitter-user",
-        JSON.stringify(authenticatedUser)
+        JSON.stringify(
+          authenticatedUser
+        )
       );
     }
 
@@ -473,8 +644,10 @@ const [otpEmail, setOtpEmail] = useState("");
         avatar:
           firebaseUser.photoURL ||
           "https://images.pexels.com/photos/1139743/pexels-photo-1139743.jpeg?auto=compress&cs=tinysrgb&w=400",
-        email: firebaseUser.email,
-        uid: firebaseUser.uid,
+        email:
+          firebaseUser.email,
+        uid:
+          firebaseUser.uid,
       };
 
       const res =
@@ -494,10 +667,16 @@ const [otpEmail, setOtpEmail] = useState("");
 
       setUser(backendUser);
 
-      localStorage.setItem(
-        "twitter-user",
-        JSON.stringify(backendUser)
-      );
+      if (
+        typeof window !== "undefined"
+      ) {
+        localStorage.setItem(
+          "twitter-user",
+          JSON.stringify(
+            backendUser
+          )
+        );
+      }
     } catch (error) {
       console.error(
         "Signup error:",
@@ -516,15 +695,25 @@ const [otpEmail, setOtpEmail] = useState("");
 
   const logout = async () => {
     try {
-      pendingOtpEmailRef.current = null;
+      pendingOtpEmailRef.current =
+        null;
+
+      setOtpPending(false);
+      setOtpEmail("");
+
+      clearOtpPending();
 
       setUser(null);
 
       await signOut(auth);
 
-      localStorage.removeItem(
-        "twitter-user"
-      );
+      if (
+        typeof window !== "undefined"
+      ) {
+        localStorage.removeItem(
+          "twitter-user"
+        );
+      }
 
       console.log(
         "✅ Logout successful"
@@ -554,15 +743,22 @@ const [otpEmail, setOtpEmail] = useState("");
 
     const updatedUser = {
       ...user,
-      preferredLanguage: language,
+      preferredLanguage:
+        language,
     };
 
     setUser(updatedUser);
 
-    localStorage.setItem(
-      "twitter-user",
-      JSON.stringify(updatedUser)
-    );
+    if (
+      typeof window !== "undefined"
+    ) {
+      localStorage.setItem(
+        "twitter-user",
+        JSON.stringify(
+          updatedUser
+        )
+      );
+    }
   };
 
   // =====================================================
@@ -608,10 +804,16 @@ const [otpEmail, setOtpEmail] = useState("");
 
         setUser(finalUser);
 
-        localStorage.setItem(
-          "twitter-user",
-          JSON.stringify(finalUser)
-        );
+        if (
+          typeof window !== "undefined"
+        ) {
+          localStorage.setItem(
+            "twitter-user",
+            JSON.stringify(
+              finalUser
+            )
+          );
+        }
       }
     } catch (error) {
       console.error(
@@ -661,7 +863,8 @@ const [otpEmail, setOtpEmail] = useState("");
               params: {
                 email:
                   firebaseuser.email,
-                uid: firebaseuser.uid,
+                uid:
+                  firebaseuser.uid,
               },
             }
           );
@@ -678,7 +881,9 @@ const [otpEmail, setOtpEmail] = useState("");
       if (!userData?._id) {
         const newuser = {
           username:
-            firebaseuser.email.split("@")[0],
+            firebaseuser.email.split(
+              "@"
+            )[0],
 
           displayName:
             firebaseuser.displayName ||
@@ -714,10 +919,16 @@ const [otpEmail, setOtpEmail] = useState("");
 
       setUser(userData);
 
-      localStorage.setItem(
-        "twitter-user",
-        JSON.stringify(userData)
-      );
+      if (
+        typeof window !== "undefined"
+      ) {
+        localStorage.setItem(
+          "twitter-user",
+          JSON.stringify(
+            userData
+          )
+        );
+      }
 
       console.log(
         "Google login successful:",
@@ -730,7 +941,8 @@ const [otpEmail, setOtpEmail] = useState("");
       );
 
       alert(
-        error.response?.data?.message ||
+        error.response?.data
+          ?.message ||
           error.message ||
           "Login failed"
       );
@@ -758,7 +970,7 @@ const [otpEmail, setOtpEmail] = useState("");
         updatePreferredLanguage,
         setAuthenticatedUser,
         otpPending,
-       otpEmail,
+        otpEmail,
       }}
     >
       {children}
