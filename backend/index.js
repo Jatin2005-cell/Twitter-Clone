@@ -7,7 +7,6 @@ import mongoose from "mongoose";
 import User from "./models/user.js";
 import Tweet from "./models/tweet.js";
 
-import nodemailer from "nodemailer";
 import otpStore from "./utils/otpStore.js";
 
 import cloudinary from "./config/cloudinary.js";
@@ -34,7 +33,9 @@ import { Resend } from "resend";
 /* =========================================================
    APP CONFIG
 ========================================================= */
+
 const resend = new Resend(process.env.RESEND_API_KEY);
+
 const app = express();
 
 app.use(cors());
@@ -70,29 +71,12 @@ const port = process.env.PORT || 5000;
 const url = process.env.MONGODB_URL;
 
 /* =========================================================
-   EMAIL CONFIG
+   RESEND EMAIL CONFIG
 ========================================================= */
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-});
-
-//transporter.verify((error, success) => {
- // if (error) {
- //   console.error("🔥 EMAIL CONFIG ERROR:", error);
- // } else {
- //   console.log("✅ EMAIL SERVER READY");
-  //}
-//});
+// Same sender that is already working for Login OTP
+const RESEND_FROM =
+  "Twiller <onboarding@resend.dev>";
 
 /* =========================================================
    OTP GENERATOR
@@ -192,7 +176,9 @@ app.post("/send-otp", async (req, res) => {
       });
     }
 
-    const emailKey = String(email).toLowerCase();
+    const emailKey = String(email)
+      .trim()
+      .toLowerCase();
 
     const user = await User.findOne({
       email: emailKey,
@@ -222,23 +208,58 @@ app.post("/send-otp", async (req, res) => {
       verified: false,
     });
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: emailKey,
-      subject: "Twiller Audio Tweet OTP",
+    console.log(
+      "🚀 SENDING AUDIO OTP THROUGH RESEND..."
+    );
 
-      html: `
-        <h2>Twiller Audio Tweet Verification</h2>
+    const { data, error } =
+      await resend.emails.send({
+        from: RESEND_FROM,
+        to: [emailKey],
+        subject:
+          "Twiller Audio Tweet OTP",
 
-        <p>Your OTP for uploading an audio tweet is:</p>
+        html: `
+          <div style="font-family: Arial, sans-serif;">
+            <h2>Twiller Audio Tweet Verification</h2>
 
-        <h1>${otp}</h1>
+            <p>
+              Your OTP for uploading an audio tweet is:
+            </p>
 
-        <p>
-          This OTP is valid for 5 minutes.
-        </p>
-      `,
-    });
+            <h1 style="letter-spacing: 8px;">
+              ${otp}
+            </h1>
+
+            <p>
+              This OTP is valid for 5 minutes.
+            </p>
+
+            <p>
+              If you did not request this OTP,
+              you can safely ignore this email.
+            </p>
+          </div>
+        `,
+      });
+
+    if (error) {
+      console.error(
+        "🔥 RESEND AUDIO OTP ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Failed to send audio OTP",
+      });
+    }
+
+    console.log(
+      "✅ AUDIO OTP EMAIL SENT:",
+      data
+    );
 
     return res.status(200).json({
       success: true,
@@ -253,7 +274,8 @@ app.post("/send-otp", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to send audio OTP",
+      message:
+        "Failed to send audio OTP",
     });
   }
 });
@@ -274,7 +296,9 @@ app.post("/verify-otp", async (req, res) => {
       });
     }
 
-    const emailKey = String(email).toLowerCase();
+    const emailKey = String(email)
+      .trim()
+      .toLowerCase();
 
     const storedOtp =
       audioOtpStore.get(emailKey);
@@ -339,254 +363,347 @@ app.post("/verify-otp", async (req, res) => {
    LOGIN OTP
 ========================================================= */
 
-app.post("/send-login-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
+app.post(
+  "/send-login-otp",
+  async (req, res) => {
+    try {
+      const { email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required",
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      const emailKey = String(email)
+        .trim()
+        .toLowerCase();
+
+      console.log(
+        "📧 LOGIN OTP REQUEST:",
+        emailKey
+      );
+
+      const user = await User.findOne({
+        email: emailKey,
       });
-    }
 
-    const emailKey = String(email)
-      .trim()
-      .toLowerCase();
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
 
-    console.log("📧 LOGIN OTP REQUEST:", emailKey);
+      const otp = generateOTP();
 
-    const user = await User.findOne({
-      email: emailKey,
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
+      otpStore.set(emailKey, {
+        otp,
+        expiresAt:
+          Date.now() + 5 * 60 * 1000,
       });
-    }
 
-    const otp = generateOTP();
+      console.log(
+        "🔐 OTP GENERATED"
+      );
 
-    otpStore.set(emailKey, {
-      otp,
-      expiresAt: Date.now() + 5 * 60 * 1000,
-    });
+      console.log(
+        "🚀 SENDING LOGIN OTP THROUGH RESEND..."
+      );
 
-    console.log("🔐 OTP GENERATED");
-    console.log("🚀 SENDING LOGIN OTP THROUGH RESEND...");
-    const { data, error } = await resend.emails.send({
-      from: "Twiller <onboarding@resend.dev>",
-      to: [emailKey],
-      subject: "Twiller Login OTP",
-      html: `
-        <div style="font-family: Arial, sans-serif;">
-          <h2>Twiller Login Verification</h2>
+      const { data, error } =
+        await resend.emails.send({
+          from: RESEND_FROM,
+          to: [emailKey],
+          subject:
+            "Twiller Login OTP",
 
-          <p>Your OTP is:</p>
+          html: `
+            <div style="font-family: Arial, sans-serif;">
+              <h2>Twiller Login Verification</h2>
 
-          <h1 style="letter-spacing: 8px;">
-            ${otp}
-          </h1>
+              <p>Your OTP is:</p>
 
-          <p>
-            This OTP is valid for 5 minutes.
-          </p>
+              <h1 style="letter-spacing: 8px;">
+                ${otp}
+              </h1>
 
-          <p>
-            If you did not request this OTP,
-            you can safely ignore this email.
-          </p>
-        </div>
-      `,
-    });
+              <p>
+                This OTP is valid for 5 minutes.
+              </p>
 
-    if (error) {
-      console.error("🔥 RESEND ERROR:", error);
+              <p>
+                If you did not request this OTP,
+                you can safely ignore this email.
+              </p>
+            </div>
+          `,
+        });
+
+      if (error) {
+        console.error(
+          "🔥 RESEND ERROR:",
+          error
+        );
+
+        return res.status(500).json({
+          success: false,
+          message:
+            "Failed to send login OTP",
+        });
+      }
+
+      console.log(
+        "✅ LOGIN OTP EMAIL SENT:",
+        data
+      );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "OTP sent successfully",
+      });
+    } catch (error) {
+      console.error(
+        "🔥 LOGIN OTP ERROR:",
+        error
+      );
 
       return res.status(500).json({
         success: false,
-        message: "Failed to send login OTP",
+        message:
+          "Failed to send login OTP",
       });
     }
-
-    console.log("✅ LOGIN OTP EMAIL SENT:", data);
-
-    return res.status(200).json({
-      success: true,
-      message: "OTP sent successfully",
-    });
-
-  } catch (error) {
-    console.error("🔥 LOGIN OTP ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to send login OTP",
-    });
   }
-});
+);
 
 /* =========================================================
    VERIFY LOGIN OTP
 ========================================================= */
 
-app.post("/verify-login-otp", async (req, res) => {
-  try {
-    const { email, otp } = req.body;
+app.post(
+  "/verify-login-otp",
+  async (req, res) => {
+    try {
+      const { email, otp } = req.body;
 
-    const emailKey = String(email).toLowerCase();
+      const emailKey = String(email)
+        .trim()
+        .toLowerCase();
 
-    const stored =
-      getStoredOTP(emailKey);
+      const stored =
+        getStoredOTP(emailKey);
 
-    if (!stored) {
-      return res.status(400).json({
-        message:
-          "OTP not found or expired",
-      });
-    }
+      if (!stored) {
+        return res.status(400).json({
+          message:
+            "OTP not found or expired",
+        });
+      }
 
-    if (
-      stored.expiresAt &&
-      Date.now() > stored.expiresAt
-    ) {
+      if (
+        stored.expiresAt &&
+        Date.now() > stored.expiresAt
+      ) {
+        otpStore.delete(emailKey);
+
+        return res.status(400).json({
+          message: "OTP expired",
+        });
+      }
+
+      if (
+        String(stored.otp) !==
+        String(otp)
+      ) {
+        return res.status(400).json({
+          message: "Invalid OTP",
+        });
+      }
+
       otpStore.delete(emailKey);
 
-      return res.status(400).json({
-        message: "OTP expired",
+      const user = await User.findOne({
+        email: emailKey,
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      const deviceInfo =
+        getDeviceInfo(
+          req.headers["user-agent"]
+        );
+
+      user.loginHistory.push({
+        browser:
+          deviceInfo.browser,
+
+        operatingSystem:
+          deviceInfo.operatingSystem,
+
+        deviceType:
+          deviceInfo.deviceType,
+
+        ipAddress:
+          req.headers[
+            "x-forwarded-for"
+          ]?.split(",")[0] ||
+          req.socket.remoteAddress,
+
+        loginTime: new Date(),
+      });
+
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "OTP verified",
+        user,
+      });
+    } catch (error) {
+      console.error(
+        "🔥 LOGIN OTP VERIFICATION ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "OTP verification failed",
       });
     }
-
-    if (
-      String(stored.otp) !==
-      String(otp)
-    ) {
-      return res.status(400).json({
-        message: "Invalid OTP",
-      });
-    }
-
-    otpStore.delete(emailKey);
-
-    const user = await User.findOne({
-      email: emailKey,
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    const deviceInfo = getDeviceInfo(
-      req.headers["user-agent"]
-    );
-
-    user.loginHistory.push({
-      browser: deviceInfo.browser,
-      operatingSystem:
-        deviceInfo.operatingSystem,
-      deviceType: deviceInfo.deviceType,
-
-      ipAddress:
-        req.headers["x-forwarded-for"]
-          ?.split(",")[0] ||
-        req.socket.remoteAddress,
-
-      loginTime: new Date(),
-    });
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "OTP verified",
-      user,
-    });
-  } catch (error) {
-    console.error(
-      "🔥 LOGIN OTP VERIFICATION ERROR:",
-      error
-    );
-
-    return res.status(500).json({
-      message:
-        "OTP verification failed",
-    });
   }
-});
+);
 
 /* =========================================================
    LANGUAGE CHANGE OTP
 ========================================================= */
 
-app.post("/request-language-change", async (req, res) => {
-  try {
-    const { email, language } = req.body;
+app.post(
+  "/request-language-change",
+  async (req, res) => {
+    try {
+      const {
+        email,
+        language,
+      } = req.body;
 
-    const user = await User.findOne({
-      email: email || "",
-    });
+      const emailKey = String(email)
+        .trim()
+        .toLowerCase();
 
-    if (!user) {
-      return res.status(404).json({
+      const user = await User.findOne({
+        email: emailKey,
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      if (!user.email) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "No registered email found.",
+        });
+      }
+
+      const otp = generateOTP();
+
+      user.otp = otp;
+
+      user.otpExpiry = new Date(
+        Date.now() + 5 * 60 * 1000
+      );
+
+      await user.save();
+
+      console.log(
+        "🚀 SENDING LANGUAGE OTP THROUGH RESEND..."
+      );
+
+      const { data, error } =
+        await resend.emails.send({
+          from: RESEND_FROM,
+          to: [user.email],
+
+          subject:
+            "Twiller Language Change OTP",
+
+          html: `
+            <div style="font-family: Arial, sans-serif;">
+              <h2>Twiller Language Change Verification</h2>
+
+              <p>
+                Your OTP for changing the language is:
+              </p>
+
+              <h1 style="letter-spacing: 8px;">
+                ${otp}
+              </h1>
+
+              <p>
+                This OTP is valid for 5 minutes.
+              </p>
+
+              <p>
+                If you did not request a language change,
+                please ignore this email.
+              </p>
+            </div>
+          `,
+        });
+
+      if (error) {
+        console.error(
+          "🔥 RESEND LANGUAGE OTP ERROR:",
+          error
+        );
+
+        return res.status(500).json({
+          success: false,
+          message:
+            "Failed to send language change OTP",
+        });
+      }
+
+      console.log(
+        `✅ Language change OTP sent to ${user.email}`
+      );
+
+      console.log(
+        "Resend response:",
+        data
+      );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "OTP sent to your registered email.",
+        method: "email",
+      });
+    } catch (error) {
+      console.error(
+        "❌ Language OTP error:",
+        error
+      );
+
+      return res.status(500).json({
         success: false,
-        message: "User not found",
+        message:
+          "Failed to send language change OTP",
       });
     }
-
-    if (!user.email) {
-      return res.status(400).json({
-        success: false,
-        message: "No registered email found.",
-      });
-    }
-
-    const otp = generateOTP();
-
-    user.otp = otp;
-    user.otpExpiry = new Date(
-      Date.now() + 5 * 60 * 1000
-    );
-
-    await user.save();
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: user.email,
-      subject: "Twiller Language Change OTP",
-      text: `
-Your OTP for changing the language is ${otp}.
-
-This OTP is valid for 5 minutes.
-
-If you did not request a language change, please ignore this email.
-      `,
-    });
-
-    console.log(
-      `✅ Language change OTP sent to ${user.email}`
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "OTP sent to your registered email.",
-      method: "email",
-    });
-  } catch (error) {
-    console.error(
-      "❌ Language OTP error:",
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to send language change OTP",
-    });
   }
-});
+);
 
 /* =========================================================
    VERIFY LANGUAGE OTP
@@ -733,44 +850,69 @@ app.post(
           user.email
         );
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: user.email,
+      console.log(
+        "🚀 SENDING PASSWORD RESET THROUGH RESEND..."
+      );
 
-        subject:
-          "Twiller Password Reset",
+      const { data, error } =
+        await resend.emails.send({
+          from: RESEND_FROM,
+          to: [user.email],
 
-        html: `
-          <h2>Password Reset</h2>
+          subject:
+            "Twiller Password Reset",
 
-          <p>
-            Click the button below to reset your password.
-          </p>
+          html: `
+            <div style="font-family: Arial, sans-serif;">
+              <h2>Twiller Password Reset</h2>
 
-          <a href="${resetLink}">
-            <button
-              style="
-                background:#1d9bf0;
-                color:white;
-                padding:10px 20px;
-                border:none;
-                border-radius:6px;
-              "
-            >
-              Reset Password
-            </button>
-          </a>
+              <p>
+                Click the button below to reset your password.
+              </p>
 
-          <p>
-            This link is generated by Firebase.
-          </p>
-        `,
-      });
+              <a
+                href="${resetLink}"
+                style="
+                  display:inline-block;
+                  background:#1d9bf0;
+                  color:white;
+                  padding:10px 20px;
+                  text-decoration:none;
+                  border-radius:6px;
+                "
+              >
+                Reset Password
+              </a>
+
+              <p style="margin-top:20px;">
+                This link is generated by Firebase.
+              </p>
+            </div>
+          `,
+        });
+
+      if (error) {
+        console.error(
+          "🔥 RESEND PASSWORD RESET ERROR:",
+          error
+        );
+
+        return res.status(500).json({
+          success: false,
+          message:
+            "Password reset email failed",
+        });
+      }
 
       user.lastPasswordReset =
         new Date();
 
       await user.save();
+
+      console.log(
+        "✅ PASSWORD RESET EMAIL SENT:",
+        data
+      );
 
       return res.status(200).json({
         success: true,
@@ -830,7 +972,9 @@ app.post(
       }
 
       const emailKey =
-        String(email).toLowerCase();
+        String(email)
+          .trim()
+          .toLowerCase();
 
       /* =========================
          3. OTP CHECK
@@ -860,7 +1004,9 @@ app.post(
           audioOtp.verifiedAt >
           5 * 60 * 1000
       ) {
-        audioOtpStore.delete(emailKey);
+        audioOtpStore.delete(
+          emailKey
+        );
 
         return res.status(403).json({
           success: false,
@@ -923,9 +1069,13 @@ app.post(
       const now = new Date();
 
       const istString =
-        now.toLocaleString("en-US", {
-          timeZone: "Asia/Kolkata",
-        });
+        now.toLocaleString(
+          "en-US",
+          {
+            timeZone:
+              "Asia/Kolkata",
+          }
+        );
 
       const istTime =
         new Date(istString);
@@ -943,7 +1093,8 @@ app.post(
       if (
         currentMinutes <
           startTime ||
-        currentMinutes >= endTime
+        currentMinutes >=
+          endTime
       ) {
         return res.status(403).json({
           success: false,
@@ -998,18 +1149,23 @@ app.post(
         "🎵 Audio accepted:",
         {
           user: user.email,
+
           name:
             req.file.originalname,
+
           size: `${(
             req.file.size /
             1024 /
             1024
           ).toFixed(2)} MB`,
+
           type:
             req.file.mimetype,
-          duration: `${duration.toFixed(
-            2
-          )} seconds`,
+
+          duration:
+            `${duration.toFixed(
+              2
+            )} seconds`,
         }
       );
 
@@ -1021,22 +1177,35 @@ app.post(
         "☁️ Uploading audio to Cloudinary..."
       );
 
-      console.log("☁️ Uploading audio to Cloudinary...");
+      const result =
+        await cloudinary.uploader.upload(
+          req.file.path,
+          {
+            resource_type:
+              "video",
 
-const result = await cloudinary.uploader.upload(
-  req.file.path,
-  {
-    resource_type: "video",
-    folder: "twiller-audio",
-  }
-);
+            folder:
+              "twiller-audio",
+          }
+        );
 
-console.log("☁️ Cloudinary upload response:", {
-  public_id: result.public_id,
-  resource_type: result.resource_type,
-  format: result.format,
-  secure_url: result.secure_url,
-});
+      console.log(
+        "☁️ Cloudinary upload response:",
+        {
+          public_id:
+            result.public_id,
+
+          resource_type:
+            result.resource_type,
+
+          format:
+            result.format,
+
+          secure_url:
+            result.secure_url,
+        }
+      );
+
       const audioUrl =
         result?.secure_url;
 
@@ -1573,10 +1742,6 @@ app.patch(
 
 /* =========================================================
    CREATE RAZORPAY ORDER
-========================================================= */
-
-/* =========================================================
-   CREATE RAZORPAY ORDER
    PAYMENT ALLOWED ONLY: 10:00 AM - 11:00 AM IST
 ========================================================= */
 
@@ -1586,29 +1751,35 @@ app.post(
     try {
       const { plan } = req.body;
 
-      // ==========================================
-      // PAYMENT TIME RESTRICTION
-      // 10:00 AM - 11:00 AM IST
-      // ==========================================
-
       const now = new Date();
 
-      const indiaTime = new Date(
-        now.toLocaleString("en-US", {
-          timeZone: "Asia/Kolkata",
-        })
-      );
+      const indiaTime =
+        new Date(
+          now.toLocaleString(
+            "en-US",
+            {
+              timeZone:
+                "Asia/Kolkata",
+            }
+          )
+        );
 
       const currentMinutes =
-        indiaTime.getHours() * 60 +
+        indiaTime.getHours() *
+          60 +
         indiaTime.getMinutes();
 
-      const startTime = 10 * 60; // 10:00 AM
-      const endTime = 11 * 60;   // 11:00 AM
+      const startTime =
+        10 * 60;
+
+      const endTime =
+        11 * 60;
 
       if (
-        currentMinutes < startTime ||
-        currentMinutes >= endTime
+        currentMinutes <
+          startTime ||
+        currentMinutes >=
+          endTime
       ) {
         return res.status(403).json({
           success: false,
@@ -1617,34 +1788,36 @@ app.post(
         });
       }
 
-      // ==========================================
-      // SUBSCRIPTION PRICES
-      // ==========================================
-
       const prices = {
         BRONZE: 100,
         SILVER: 300,
         GOLD: 1000,
       };
 
-      const amount = prices[plan];
+      const amount =
+        prices[plan];
 
       if (!amount) {
         return res.status(400).json({
           success: false,
-          message: "Invalid Subscription Plan",
+          message:
+            "Invalid Subscription Plan",
         });
       }
 
-      // ==========================================
-      // CREATE RAZORPAY ORDER
-      // ==========================================
+      const order =
+        await razorpay.orders.create(
+          {
+            amount:
+              amount * 100,
 
-      const order = await razorpay.orders.create({
-        amount: amount * 100,
-        currency: "INR",
-        receipt: `receipt_${Date.now()}`,
-      });
+            currency:
+              "INR",
+
+            receipt:
+              `receipt_${Date.now()}`,
+          }
+        );
 
       console.log(
         `✅ Razorpay order created for ${plan}: ₹${amount}`
@@ -1662,7 +1835,8 @@ app.post(
 
       res.status(500).send({
         success: false,
-        message: "Failed to create order",
+        message:
+          "Failed to create order",
       });
     }
   }
@@ -1693,7 +1867,8 @@ app.post(
         crypto
           .createHmac(
             "sha256",
-            process.env.RAZORPAY_KEY_SECRET
+            process.env
+              .RAZORPAY_KEY_SECRET
           )
           .update(
             body.toString()
@@ -1757,57 +1932,92 @@ app.post(
 
       await user.save();
 
-      await transporter.sendMail({
-        from:
-          process.env.EMAIL_USER,
+      /* =====================================================
+         SEND SUBSCRIPTION INVOICE THROUGH RESEND
+      ===================================================== */
 
-        to:
-          user.email,
+      console.log(
+        "🚀 SENDING SUBSCRIPTION INVOICE THROUGH RESEND..."
+      );
 
-        subject:
-          "Twiller Subscription Invoice",
+      const { data, error } =
+        await resend.emails.send({
+          from:
+            RESEND_FROM,
 
-        html: `
+          to: [
+            user.email,
+          ],
 
-          <h2>
-            Twiller Subscription Successful
-          </h2>
+          subject:
+            "Twiller Subscription Invoice",
 
-          <hr/>
+          html: `
+            <div
+              style="
+                font-family: Arial, sans-serif;
+                max-width: 600px;
+                margin: auto;
+                padding: 20px;
+              "
+            >
 
-          <p>
-            <strong>Invoice ID:</strong>
-            ${invoiceId}
-          </p>
+              <h2>
+                Twiller Subscription Successful
+              </h2>
 
-          <p>
-            <strong>Plan:</strong>
-            ${plan}
-          </p>
+              <hr/>
 
-          <p>
-            <strong>Amount:</strong>
-            ₹${prices[plan]}
-          </p>
+              <p>
+                <strong>Invoice ID:</strong>
+                ${invoiceId}
+              </p>
 
-          <p>
-            <strong>Purchase Date:</strong>
-            ${new Date().toLocaleString()}
-          </p>
+              <p>
+                <strong>Plan:</strong>
+                ${plan}
+              </p>
 
-          <p>
-            <strong>Expiry Date:</strong>
-            ${expiry.toDateString()}
-          </p>
+              <p>
+                <strong>Amount:</strong>
+                ₹${prices[plan]}
+              </p>
 
-          <hr/>
+              <p>
+                <strong>Purchase Date:</strong>
+                ${new Date().toLocaleString()}
+              </p>
 
-          <h3>
-            Thank you for purchasing Twiller Premium.
-          </h3>
+              <p>
+                <strong>Expiry Date:</strong>
+                ${expiry.toDateString()}
+              </p>
 
-        `,
-      });
+              <hr/>
+
+              <h3>
+                Thank you for purchasing Twiller Premium.
+              </h3>
+
+            </div>
+          `,
+        });
+
+      if (error) {
+        console.error(
+          "🔥 RESEND INVOICE ERROR:",
+          error
+        );
+
+        // Payment is already successful,
+        // so don't fail the payment response
+        // only because invoice email failed.
+      } else {
+        console.log(
+          "✅ SUBSCRIPTION INVOICE SENT:",
+          data
+        );
+      }
 
       res.send({
         success:
