@@ -45,17 +45,12 @@ const Mainlayout = ({ children }: { children: React.ReactNode }) => {
   if (otpPending) {
     return (
       <>
-        {/* Keep landing page in background */}
         <Landing />
 
-        {/* OTP popup stays visible */}
         <LoginOtpModal
           open={true}
           email={otpEmail}
-          onClose={() => {
-            // Intentionally empty.
-            // User must verify OTP to complete login.
-          }}
+          onClose={() => {}}
           onSuccess={(authenticatedUser) => {
             console.log(
               "✅ OTP VERIFIED FROM MAINLAYOUT:",
@@ -82,37 +77,66 @@ const Mainlayout = ({ children }: { children: React.ReactNode }) => {
   // =====================================================
 
   return (
-    <div className="min-h-screen bg-black text-white flex justify-center">
+    <div className="min-h-screen w-full bg-black text-white overflow-x-hidden">
+      <div className="w-full max-w-[1400px] mx-auto flex min-h-screen">
 
-      {/* =================================================
-          LEFT SIDEBAR
-      ================================================= */}
+        {/* =================================================
+            LEFT SIDEBAR
+        ================================================= */}
 
-      <div className="w-20 sm:w-24 md:w-64 border-r border-gray-800">
-        <Sidebar
-          currentPage={currentPage}
-          onNavigate={setCurrentPage}
-        />
-      </div>
+        <aside
+          className="
+            shrink-0
+            w-16
+            sm:w-20
+            md:w-64
+            border-r
+            border-gray-800
+          "
+        >
+          <Sidebar
+            currentPage={currentPage}
+            onNavigate={setCurrentPage}
+          />
+        </aside>
 
-      {/* =================================================
-          MAIN CONTENT
-      ================================================= */}
+        {/* =================================================
+            MAIN CONTENT
+        ================================================= */}
 
-      <main className="flex-1 max-w-2xl border-r border-gray-800">
-        {currentPage === "profile" ? (
-          <ProfilePage />
-        ) : (
-          children
-        )}
-      </main>
+        <main
+          className="
+            flex-1
+            min-w-0
+            w-0
+            border-r
+            border-gray-800
+          "
+        >
+          {currentPage === "profile" ? (
+            <ProfilePage />
+          ) : (
+            children
+          )}
+        </main>
 
-      {/* =================================================
-          RIGHT SIDEBAR
-      ================================================= */}
+        {/* =================================================
+            RIGHT SIDEBAR
+        ================================================= */}
 
-      <div className="hidden lg:block w-80 p-4">
-        <RightSidebar />
+        <aside
+          className="
+            hidden
+            lg:block
+            shrink-0
+            w-72
+            xl:w-80
+            p-4
+          "
+        >
+          <RightSidebar />
+        </aside>
+
       </div>
     </div>
   );

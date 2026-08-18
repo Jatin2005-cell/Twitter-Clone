@@ -69,7 +69,7 @@ const Feed = () => {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen w-full min-w-0 overflow-x-hidden">
       <div className="sticky top-0 bg-black/90 backdrop-blur-md border-b border-gray-800 z-10">
         <div className="px-4 py-3">
           <h1 className="text-xl font-bold text-white">Home</h1>

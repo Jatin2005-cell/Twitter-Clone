@@ -37,7 +37,7 @@ const suggestions = [
 export default function RightSidebar() {
    const [openSubscription, setOpenSubscription] = useState(false);
   return (
-    <div className="w-80 p-4 space-y-4">
+    <div className="w-full p-0 space-y-4">
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
