@@ -79,7 +79,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-transporter.verify((error) => {
+transporter.verify((error, success) => {
   if (error) {
     console.error("🔥 EMAIL CONFIG ERROR:", error);
   } else {
@@ -336,6 +336,10 @@ app.post("/send-login-otp", async (req, res) => {
   try {
     const { email } = req.body;
 
+    console.log("📧 LOGIN OTP REQUEST:", email);
+    console.log("📧 EMAIL USER EXISTS:", !!process.env.EMAIL_USER);
+    console.log("📧 EMAIL PASS EXISTS:", !!process.env.EMAIL_PASS);
+
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -343,15 +347,15 @@ app.post("/send-login-otp", async (req, res) => {
       });
     }
 
-    const emailKey = String(email)
-      .trim()
-      .toLowerCase();
+    const emailKey = String(email).trim().toLowerCase();
 
     const user = await User.findOne({
       email: emailKey,
     });
 
     if (!user) {
+      console.log("❌ USER NOT FOUND:", emailKey);
+
       return res.status(404).json({
         success: false,
         message: "User not found",
@@ -365,40 +369,21 @@ app.post("/send-login-otp", async (req, res) => {
       expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
-    console.log(
-      `📧 Sending LOGIN OTP to ${emailKey}: ${otp}`
-    );
+    console.log("🔐 OTP GENERATED");
 
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: emailKey,
       subject: "Twiller Login OTP",
-
       html: `
-        <div style="font-family: Arial, sans-serif;">
-          <h2>Twiller Login Verification</h2>
-
-          <p>Your login OTP is:</p>
-
-          <h1 style="letter-spacing: 8px;">
-            ${otp}
-          </h1>
-
-          <p>
-            This OTP is valid for 5 minutes.
-          </p>
-
-          <p>
-            If you did not attempt to login,
-            please ignore this email.
-          </p>
-        </div>
+        <h2>Twiller Login Verification</h2>
+        <p>Your OTP is:</p>
+        <h1>${otp}</h1>
+        <p>This OTP is valid for 5 minutes.</p>
       `,
     });
 
-    console.log(
-      `✅ LOGIN OTP email sent successfully to ${emailKey}`
-    );
+    console.log("✅ EMAIL SENT:", info.messageId);
 
     return res.status(200).json({
       success: true,
@@ -406,10 +391,7 @@ app.post("/send-login-otp", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(
-      "🔥 LOGIN OTP ERROR:",
-      error
-    );
+    console.error("🔥 LOGIN OTP ERROR:", error);
 
     return res.status(500).json({
       success: false,
