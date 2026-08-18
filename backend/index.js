@@ -29,7 +29,7 @@ import LoginHistory from "./models/LoginHistory.js";
 import { parseFile } from "music-metadata";
 import audioOtpStore from "./utils/audioOtpStore.js";
 
-const { Resend } = require("resend");
+import { Resend } from "resend";
 
 /* =========================================================
    APP CONFIG
