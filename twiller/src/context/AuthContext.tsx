@@ -34,7 +34,8 @@ interface User {
   notificationsEnabled: boolean;
   phoneNumber?: string;
   preferredLanguage?: "en" | "hi" | "es" | "pt" | "fr" | "zh";
-
+  otpPending: boolean;
+  otpEmail: string;
   loginHistory?: {
     browser: string;
     operatingSystem: string;
@@ -106,6 +107,8 @@ export const AuthProvider: React.FC<{
 }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [otpPending, setOtpPending] = useState(false);
+const [otpEmail, setOtpEmail] = useState("");
 
   // =====================================================
   // OTP PENDING STATE
@@ -377,7 +380,8 @@ export const AuthProvider: React.FC<{
       // -------------------------------------------------
       // 6. RETURN OTP REQUIREMENT
       // -------------------------------------------------
-
+       setOtpEmail(firebaseUser.email);
+       setOtpPending(true);  
       return {
         requireOtp: true,
         email: firebaseUser.email,
@@ -420,7 +424,8 @@ export const AuthProvider: React.FC<{
 
     // First remove OTP pending state
     pendingOtpEmailRef.current = null;
-
+    setOtpPending(false);
+     setOtpEmail("");
     // Now application is actually logged in
     setUser(authenticatedUser);
 
@@ -750,6 +755,8 @@ export const AuthProvider: React.FC<{
         googlesignin,
         updatePreferredLanguage,
         setAuthenticatedUser,
+        otpPending,
+       otpEmail,
       }}
     >
       {children}

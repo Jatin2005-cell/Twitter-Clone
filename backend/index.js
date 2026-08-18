@@ -1580,63 +1580,94 @@ app.patch(
    CREATE RAZORPAY ORDER
 ========================================================= */
 
+/* =========================================================
+   CREATE RAZORPAY ORDER
+   PAYMENT ALLOWED ONLY: 10:00 AM - 11:00 AM IST
+========================================================= */
+
 app.post(
   "/create-order",
   async (req, res) => {
     try {
-      const {
-        plan,
-      } = req.body;
+      const { plan } = req.body;
+
+      // ==========================================
+      // PAYMENT TIME RESTRICTION
+      // 10:00 AM - 11:00 AM IST
+      // ==========================================
+
+      const now = new Date();
+
+      const indiaTime = new Date(
+        now.toLocaleString("en-US", {
+          timeZone: "Asia/Kolkata",
+        })
+      );
+
+      const currentMinutes =
+        indiaTime.getHours() * 60 +
+        indiaTime.getMinutes();
+
+      const startTime = 10 * 60; // 10:00 AM
+      const endTime = 11 * 60;   // 11:00 AM
+
+      if (
+        currentMinutes < startTime ||
+        currentMinutes >= endTime
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Payments are allowed only between 10:00 AM and 11:00 AM IST.",
+        });
+      }
+
+      // ==========================================
+      // SUBSCRIPTION PRICES
+      // ==========================================
 
       const prices = {
-        BRONZE:
-          100,
-
-        SILVER:
-          300,
-
-        GOLD:
-          1000,
+        BRONZE: 100,
+        SILVER: 300,
+        GOLD: 1000,
       };
 
-      const amount =
-        prices[plan];
+      const amount = prices[plan];
 
       if (!amount) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid Subscription Plan",
+          message: "Invalid Subscription Plan",
         });
       }
 
-      const order =
-        await razorpay.orders.create({
-          amount:
-            amount * 100,
+      // ==========================================
+      // CREATE RAZORPAY ORDER
+      // ==========================================
 
-          currency:
-            "INR",
+      const order = await razorpay.orders.create({
+        amount: amount * 100,
+        currency: "INR",
+        receipt: `receipt_${Date.now()}`,
+      });
 
-          receipt:
-            `receipt_${Date.now()}`,
-        });
+      console.log(
+        `✅ Razorpay order created for ${plan}: ₹${amount}`
+      );
 
       res.send({
-        success:
-          true,
-
+        success: true,
         order,
       });
     } catch (error) {
-      console.error(error);
+      console.error(
+        "🔥 Razorpay order creation error:",
+        error
+      );
 
       res.status(500).send({
-        success:
-          false,
-
-        message:
-          "Failed to create order",
+        success: false,
+        message: "Failed to create order",
       });
     }
   }
