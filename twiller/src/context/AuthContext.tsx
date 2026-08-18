@@ -84,6 +84,8 @@ interface AuthContextType {
   updatePreferredLanguage: (
     language: "en" | "hi" | "es" | "pt" | "fr" | "zh"
   ) => void;
+  otpPending: boolean;
+  otpEmail: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(
