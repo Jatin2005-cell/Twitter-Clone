@@ -29,10 +29,12 @@ import LoginHistory from "./models/LoginHistory.js";
 import { parseFile } from "music-metadata";
 import audioOtpStore from "./utils/audioOtpStore.js";
 
+const { Resend } = require("resend");
+
 /* =========================================================
    APP CONFIG
 ========================================================= */
-
+const resend = new Resend(process.env.RESEND_API_KEY);
 const app = express();
 
 app.use(cors());
@@ -84,13 +86,13 @@ const transporter = nodemailer.createTransport({
   socketTimeout: 10000,
 });
 
-transporter.verify((error, success) => {
-  if (error) {
-    console.error("🔥 EMAIL CONFIG ERROR:", error);
-  } else {
-    console.log("✅ EMAIL SERVER READY");
-  }
-});
+//transporter.verify((error, success) => {
+ // if (error) {
+ //   console.error("🔥 EMAIL CONFIG ERROR:", error);
+ // } else {
+ //   console.log("✅ EMAIL SERVER READY");
+  //}
+//});
 
 /* =========================================================
    OTP GENERATOR
@@ -341,10 +343,6 @@ app.post("/send-login-otp", async (req, res) => {
   try {
     const { email } = req.body;
 
-    console.log("📧 LOGIN OTP REQUEST:", email);
-    console.log("📧 EMAIL USER EXISTS:", !!process.env.EMAIL_USER);
-    console.log("📧 EMAIL PASS EXISTS:", !!process.env.EMAIL_PASS);
-
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -352,15 +350,17 @@ app.post("/send-login-otp", async (req, res) => {
       });
     }
 
-    const emailKey = String(email).trim().toLowerCase();
+    const emailKey = String(email)
+      .trim()
+      .toLowerCase();
+
+    console.log("📧 LOGIN OTP REQUEST:", emailKey);
 
     const user = await User.findOne({
       email: emailKey,
     });
 
     if (!user) {
-      console.log("❌ USER NOT FOUND:", emailKey);
-
       return res.status(404).json({
         success: false,
         message: "User not found",
@@ -375,20 +375,43 @@ app.post("/send-login-otp", async (req, res) => {
     });
 
     console.log("🔐 OTP GENERATED");
-
-    const info = await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: emailKey,
+    console.log("🚀 SENDING LOGIN OTP THROUGH RESEND...");
+    const { data, error } = await resend.emails.send({
+      from: "Twiller <onboarding@resend.dev>",
+      to: [emailKey],
       subject: "Twiller Login OTP",
       html: `
-        <h2>Twiller Login Verification</h2>
-        <p>Your OTP is:</p>
-        <h1>${otp}</h1>
-        <p>This OTP is valid for 5 minutes.</p>
+        <div style="font-family: Arial, sans-serif;">
+          <h2>Twiller Login Verification</h2>
+
+          <p>Your OTP is:</p>
+
+          <h1 style="letter-spacing: 8px;">
+            ${otp}
+          </h1>
+
+          <p>
+            This OTP is valid for 5 minutes.
+          </p>
+
+          <p>
+            If you did not request this OTP,
+            you can safely ignore this email.
+          </p>
+        </div>
       `,
     });
 
-    console.log("✅ EMAIL SENT:", info.messageId);
+    if (error) {
+      console.error("🔥 RESEND ERROR:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send login OTP",
+      });
+    }
+
+    console.log("✅ LOGIN OTP EMAIL SENT:", data);
 
     return res.status(200).json({
       success: true,
